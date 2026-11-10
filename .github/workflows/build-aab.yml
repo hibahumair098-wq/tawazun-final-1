@@ -1,0 +1,38 @@
+name: Build Release AAB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code utaro
+        uses: actions/checkout@v4
+
+      - name: JDK 17 install karo
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle 9.3.1 install karo
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Keystore wapis banao (secret se)
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+
+      - name: Release AAB build karo
+        run: gradle :app:bundleRelease --stacktrace
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: AAB file mehfooz karo
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawazun-release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
