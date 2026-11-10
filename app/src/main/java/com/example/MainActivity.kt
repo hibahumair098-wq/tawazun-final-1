@@ -48,7 +48,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             TawazunTheme(darkTheme = true) {
                 val repository = remember { TawazunRepository() }
-                val aiService = remember { TawazunAiService() }
                 val session by repository.currentSession.collectAsState()
                 val context = LocalContext.current
                 val coroutineScope = rememberCoroutineScope()
@@ -61,11 +60,9 @@ class MainActivity : ComponentActivity() {
                                 onParentLogin = { email -> repository.loginAsParent(email) },
                                 onStudentLogin = { email -> repository.loginAsStudent(email) },
                                 onGoogleSignIn = {
-                                    val clientId = try {
-                                        context.getString(R.string.default_web_client_id)
-                                    } catch (e: Exception) {
-                                        "160513495828-p7hbu9js0hde5cpp5d1upqrg5i2rfgp1.apps.googleusercontent.com"
-                                    }
+                                    // NOTE: google-services.json add hone ke baad wapas
+                                    // R.string.default_web_client_id use karna
+                                    val clientId = "160513495828-p7hbu9js0hde5cpp5d1upqrg5i2rfgp1.apps.googleusercontent.com"
                                     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
                                     val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
 
@@ -100,7 +97,6 @@ class MainActivity : ComponentActivity() {
                                 UserRole.PARENT -> {
                                     ParentDashboardScreen(
                                         repository = repository,
-                                        aiService = aiService,
                                         onLogout = { repository.logout() },
                                         modifier = Modifier.padding(innerPadding)
                                     )
@@ -108,7 +104,6 @@ class MainActivity : ComponentActivity() {
                                 UserRole.STUDENT -> {
                                     StudentDeviceScreen(
                                         repository = repository,
-                                        aiService = aiService,
                                         onLogout = { repository.logout() },
                                         modifier = Modifier.padding(innerPadding)
                                     )
