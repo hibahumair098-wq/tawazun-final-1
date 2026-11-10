@@ -1,0 +1,58 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "usageEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "childId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "webAttempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "childId", "order": "ASCENDING" },
+        { "fieldPath": "attemptedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mirrorSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "childId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "devices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "childId", "order": "ASCENDING" },
+        { "fieldPath": "isRevoked", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "usageEvents",
+      "fieldPath": "expireAt",
+      "ttl": true
+    },
+    {
+      "collectionGroup": "webAttempts",
+      "fieldPath": "expireAt",
+      "ttl": true
+    },
+    {
+      "collectionGroup": "mirrorSessions",
+      "fieldPath": "expireAt",
+      "ttl": true
+    },
+    {
+      "collectionGroup": "homework",
+      "fieldPath": "expireAt",
+      "ttl": true
+    }
+  ]
+}

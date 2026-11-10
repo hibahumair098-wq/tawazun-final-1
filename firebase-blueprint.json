@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "User": {
+      "path": "users/{userId}",
+      "fields": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["PARENT", "STUDENT"] },
+        "familyId": { "type": "string" },
+        "emailVerified": { "type": "boolean" },
+        "consentAccepted": { "type": "boolean" },
+        "consentAt": { "type": "string" },
+        "consentVersion": { "type": "string" }
+      }
+    },
+    "Family": {
+      "path": "families/{familyId}",
+      "fields": {
+        "id": { "type": "string" },
+        "familyName": { "type": "string" },
+        "primaryParentEmail": { "type": "string" },
+        "consentAt": { "type": "string" },
+        "consentVersion": { "type": "string" }
+      }
+    },
+    "Child": {
+      "path": "families/{familyId}/children/{childId}",
+      "fields": {
+        "id": { "type": "string" },
+        "familyId": { "type": "string" },
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "homeworkUnlocked": { "type": "boolean" },
+        "bedtimeStart": { "type": "string" },
+        "bedtimeEnd": { "type": "string" }
+      }
+    },
+    "AppPolicy": {
+      "path": "families/{familyId}/children/{childId}/policies/{appKey}",
+      "fields": {
+        "appKey": { "type": "string" },
+        "appName": { "type": "string" },
+        "category": { "type": "string" },
+        "dailyLimitMin": { "type": "number" },
+        "groupName": { "type": "string", "nullable": true }
+      }
+    },
+    "HomeworkTask": {
+      "path": "families/{familyId}/children/{childId}/homework/{taskId}",
+      "fields": {
+        "taskId": { "type": "string" },
+        "childId": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "isCompletedByStudent": { "type": "boolean" },
+        "isVerifiedByParent": { "type": "boolean" },
+        "expireAt": { "type": "timestamp" }
+      }
+    }
+  }
+}

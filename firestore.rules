@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isParent() {
+      return isAuthenticated() && request.auth.token.role == 'PARENT';
+    }
+
+    // Family ID must be derived strictly from the auth token, NEVER trusted from request data
+    function belongsToFamily(familyId) {
+      return isAuthenticated() && request.auth.token.familyId == familyId;
+    }
+
+    // User profiles: users can read their own profile, cannot modify role/familyId
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated() && request.auth.uid == userId 
+        && request.resource.data.role == 'PARENT'
+        && request.resource.data.consentAccepted == true;
+      allow update: if isAuthenticated() && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'familyId', 'consentAt', 'consentVersion']);
+      allow delete: if false;
+    }
+
+    // Families and subcollections
+    match /families/{familyId} {
+      allow read: if belongsToFamily(familyId);
+      allow write: if isParent() && belongsToFamily(familyId);
+
+      // Children sub-collection
+      match /children/{childId} {
+        allow read: if belongsToFamily(familyId);
+        // Parents can register children only after verified consent; homeworkUnlocked can ONLY be set by Cloud Functions
+        allow create, update: if isParent() && belongsToFamily(familyId)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['homeworkUnlocked']);
+        allow delete: if isParent() && belongsToFamily(familyId);
+
+        // App policies: only parents in family can read & modify
+        match /policies/{appKey} {
+          allow read: if belongsToFamily(familyId);
+          allow write: if isParent() && belongsToFamily(familyId);
+        }
+
+        // Homework tasks: student can mark completedByStudent; parent can verify; delete restricted
+        match /homework/{taskId} {
+          allow read: if belongsToFamily(familyId);
+          allow create: if isParent() && belongsToFamily(familyId);
+          allow update: if belongsToFamily(familyId);
+          allow delete: if isParent() && belongsToFamily(familyId);
+        }
+
+        // Usage daily aggregates (30-day retention)
+        match /usageDaily/{date} {
+          allow read: if belongsToFamily(familyId);
+          allow write: if false; // Only written by Cloud Functions
+        }
+      }
+    }
+
+    // Devices: client cannot write; managed via HMAC-authenticated Cloud Functions
+    match /devices/{deviceId} {
+      allow read: if isParent() && belongsToFamily(resource.data.familyId);
+      allow write: if false;
+    }
+
+    // Mirror sessions: parents can read within their family; clients CANNOT write
+    match /mirrorSessions/{sessionId} {
+      allow read: if isParent() && belongsToFamily(resource.data.familyId);
+      allow write: if false; // Generated exclusively by Cloud Functions
+    }
+
+    // Usage events: client write is FORBIDDEN; ingested via /ingest Cloud Function
+    match /usageEvents/{eventId} {
+      allow read: if isParent() && belongsToFamily(resource.data.familyId);
+      allow write: if false;
+    }
+
+    // Web attempts: client write is FORBIDDEN; evaluated via checkDomain Cloud Function
+    match /webAttempts/{attemptId} {
+      allow read: if isParent() && belongsToFamily(resource.data.familyId);
+      allow write: if false;
+    }
+
+    // Audit logs: immutable, write is strictly backend-only
+    match /auditLogs/{logId} {
+      allow read: if isParent() && belongsToFamily(resource.data.familyId);
+      allow write: if false;
+    }
+  }
+}

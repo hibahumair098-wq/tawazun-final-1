@@ -1,0 +1,6 @@
+{
+  "name": "Tawazun",
+  "description": "Parental screen-time balance and monitoring platform for Pakistani families",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
