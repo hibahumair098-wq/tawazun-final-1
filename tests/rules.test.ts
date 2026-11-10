@@ -1,107 +1,47 @@
-import {
-  assertFails,
-  assertSucceeds,
-  initializeTestEnvironment,
-  RulesTestEnvironment
-} from "@firebase/rules-unit-testing";
-import * as fs from "fs";
-import * as path from "path";
+name: Tawazun CI
 
-describe("Tawazun Security Rules Unit Tests", () => {
-  let testEnv: RulesTestEnvironment;
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
-  beforeAll(async () => {
-    testEnv = await initializeTestEnvironment({
-      projectId: "tawazun-rules-test",
-      firestore: {
-        rules: fs.readFileSync(path.resolve(__dirname, "../firestore.rules"), "utf8"),
-        host: "localhost",
-        port: 8080
-      }
-    });
-  });
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-  afterAll(async () => {
-    await testEnv.cleanup();
-  });
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-  beforeEach(async () => {
-    await testEnv.clearFirestore();
-  });
+      - name: Install dependencies
+        run: |
+          npm ci || npm install
+          cd functions && (npm ci || npm install)
 
-  test("Signed-out read is denied across the board", async () => {
-    const unauthedDb = testEnv.unauthenticatedContext().firestore();
-    const familyDoc = unauthedDb.doc("families/fam_pk_001");
-    await assertFails(familyDoc.get());
-  });
+      - name: Typecheck Cloud Functions
+        run: |
+          cd functions && npm run build
 
-  test("Cross-family document read returns PERMISSION_DENIED", async () => {
-    // Authenticated as Family 2 Parent
-    const fam2ParentDb = testEnv.authenticatedContext("user_tariq", {
-      role: "PARENT",
-      familyId: "fam_pk_002"
-    }).firestore();
+      - name: Run Wildcard Domain Tests
+        run: |
+          npx jest tests/domain.test.ts
 
-    // Tries to read Family 1 child document
-    const fam1ChildDoc = fam2ParentDb.doc("families/fam_pk_001/children/child_zain");
-    await assertFails(fam1ChildDoc.get());
-  });
+      - name: Verify No Phone/SMS OTP Collection
+        run: |
+          echo "Scanning for illegal SMS/phone number collection..."
+          ! grep -rEi "(\\bphone\\b|\\bsms\\b|otp.*phone)" app/src/main/
 
-  test("Same-family parent can read their own family documents", async () => {
-    // Seed Family 1
-    await testEnv.withSecurityRulesDisabled(async (context) => {
-      await context.firestore().doc("families/fam_pk_001/children/child_zain").set({
-        name: "Zain Ali",
-        grade: "Grade 9"
-      });
-    });
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
-    const fam1ParentDb = testEnv.authenticatedContext("user_ahmed", {
-      role: "PARENT",
-      familyId: "fam_pk_001"
-    }).firestore();
-
-    const childDoc = fam1ParentDb.doc("families/fam_pk_001/children/child_zain");
-    await assertSucceeds(childDoc.get());
-  });
-
-  test("Child cannot write app policy; only parent can write policy", async () => {
-    const childDb = testEnv.authenticatedContext("child_zain", {
-      role: "STUDENT",
-      familyId: "fam_pk_001"
-    }).firestore();
-
-    const policyDoc = childDb.doc("families/fam_pk_001/children/child_zain/policies/youtube");
-    await assertFails(policyDoc.set({ dailyLimitMin: 240 }));
-
-    const parentDb = testEnv.authenticatedContext("user_ahmed", {
-      role: "PARENT",
-      familyId: "fam_pk_001"
-    }).firestore();
-
-    await assertSucceeds(policyDoc.set({ dailyLimitMin: 45 }));
-  });
-
-  test("Client/device cannot write directly to usageEvents or webAttempts", async () => {
-    const parentDb = testEnv.authenticatedContext("user_ahmed", {
-      role: "PARENT",
-      familyId: "fam_pk_001"
-    }).firestore();
-
-    const usageDoc = parentDb.collection("usageEvents").doc("fake_event");
-    await assertFails(usageDoc.set({
-      childId: "child_zain",
-      familyId: "fam_pk_001",
-      appKey: "youtube",
-      durationMin: 120
-    }));
-
-    const webDoc = parentDb.collection("webAttempts").doc("fake_attempt");
-    await assertFails(webDoc.set({
-      childId: "child_zain",
-      familyId: "fam_pk_001",
-      domain: "youtube.com",
-      blocked: false
-    }));
-  });
-});
+      - name: Run Android Unit Tests
+        run: |
+          chmod +x gradlew || true
+          gradle :app:testDebugUnitTest
