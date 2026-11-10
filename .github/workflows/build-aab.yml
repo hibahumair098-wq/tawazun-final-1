@@ -24,15 +24,17 @@ jobs:
       - name: Keystore wapis banao (secret se)
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
 
-      - name: Release AAB build karo
-        run: gradle :app:bundleRelease --stacktrace
+      - name: Release AAB + APK build karo
+        run: gradle :app:bundleRelease :app:assembleRelease --stacktrace
         env:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: AAB file mehfooz karo
+      - name: Files mehfooz karo
         uses: actions/upload-artifact@v4
         with:
-          name: tawazun-release-aab
-          path: app/build/outputs/bundle/release/app-release.aab
+          name: tawazun-release
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
