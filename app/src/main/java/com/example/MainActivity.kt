@@ -80,8 +80,7 @@ class MainActivity : ComponentActivity() {
                                             Log.w(TAG, "Google Sign-In cancelled: ${e.message}", e)
                                         } catch (e: Exception) {
                                             Log.e(TAG, "Google Sign-In error", e)
-                                            // Fallback for emulator without Google Play Services account
-                                            repository.loginAsParent("parent.google@gmail.com")
+                                            // SECURITY FIX: error par ab login NAHI hota (pehle yahan fake login tha)
                                         }
                                     }
                                 },
