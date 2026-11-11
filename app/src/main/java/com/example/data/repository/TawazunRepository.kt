@@ -251,6 +251,8 @@ class TawazunRepository {
         return try {
             withContext(Dispatchers.IO) {
                 Tasks.await(auth.createUserWithEmailAndPassword(cleanEmail, password))
+                // Asli email check: Firebase inbox mein verify-link email bhejta hai
+                auth.currentUser?.sendEmailVerification()
             }
             _currentSession.value = UserSession(
                 email = cleanEmail,
@@ -303,6 +305,8 @@ class TawazunRepository {
         return try {
             withContext(Dispatchers.IO) {
                 Tasks.await(auth.createUserWithEmailAndPassword(cleanEmail, password))
+                // Asli email check: Firebase inbox mein verify-link email bhejta hai
+                auth.currentUser?.sendEmailVerification()
             }
             val matchedChild = _children.value.find { it.studentEmail.equals(cleanEmail, ignoreCase = true) }
                 ?: _children.value.first()
@@ -379,6 +383,11 @@ class TawazunRepository {
 
     fun clearAuthError() {
         _authError.value = null
+    }
+
+    /** Verify-email link dobara bhejo (banner ka Resend button). */
+    fun resendVerificationEmail() {
+        auth.currentUser?.sendEmailVerification()
     }
 
     fun logout() {
