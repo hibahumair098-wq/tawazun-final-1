@@ -19,10 +19,18 @@ import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.concurrent.ExecutionException
@@ -35,6 +43,11 @@ class TawazunRepository {
     // REAL Firebase Authentication engine
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 
+    // REAL Firestore database (asli family data)
+    private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var familyListener: ListenerRegistration? = null
+
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
     val currentSession: StateFlow<UserSession?> = _currentSession.asStateFlow()
@@ -46,53 +59,51 @@ class TawazunRepository {
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
 
+    // Children load ho rahe hain? (Firestore se)
+    private val _childrenLoading = MutableStateFlow(false)
+    val childrenLoading: StateFlow<Boolean> = _childrenLoading.asStateFlow()
+
     init {
         // App restart par agar Firebase user logged in hai to session restore karo
         auth.addAuthStateListener { firebaseAuth ->
             val user = firebaseAuth.currentUser
             if (user != null && _currentSession.value == null) {
-                _currentSession.value = UserSession(
-                    email = user.email ?: "",
-                    role = UserRole.PARENT,
-                    isEmailVerified = user.isEmailVerified,
-                    consentAccepted = true
-                )
+                val email = user.email ?: ""
+                scope.launch {
+                    // Email se role detect karo: ye bacha hai ya parent?
+                    val child = findChildByEmail(email)
+                    if (child != null) {
+                        _children.value = listOf(child)
+                        _currentSession.value = UserSession(
+                            email = email,
+                            role = UserRole.STUDENT,
+                            familyId = child.familyId,
+                            childId = child.id,
+                            isEmailVerified = user.isEmailVerified,
+                            consentAccepted = true
+                        )
+                        _selectedChildId.value = child.id
+                        attachChildrenListener(child.familyId)
+                    } else {
+                        _currentSession.value = UserSession(
+                            email = email,
+                            role = UserRole.PARENT,
+                            familyId = user.uid,
+                            isEmailVerified = user.isEmailVerified,
+                            consentAccepted = true
+                        )
+                        startFamilySession(user.uid, email)
+                    }
+                }
             }
         }
     }
 
-    // Children in family
-    private val _children = MutableStateFlow<List<Child>>(
-        listOf(
-            Child(
-                id = "child_zain",
-                name = "Zain Ali",
-                grade = "Grade 9 (Matric)",
-                avatarEmoji = "👦",
-                deviceModel = "Samsung Galaxy A15",
-                studentEmail = "student.zain@gmail.com",
-                homeworkUnlocked = false,
-                bedtimeStart = "22:00",
-                bedtimeEnd = "06:30",
-                pairingCode = "TWZ-9104"
-            ),
-            Child(
-                id = "child_ayla",
-                name = "Ayla Khan",
-                grade = "Grade 7 (Pre-O-Levels)",
-                avatarEmoji = "👧",
-                deviceModel = "Redmi Note 12",
-                studentEmail = "student.ayla@gmail.com",
-                homeworkUnlocked = true,
-                bedtimeStart = "21:30",
-                bedtimeEnd = "07:00",
-                pairingCode = "TWZ-3829"
-            )
-        )
-    )
+    // Children in family — ab Firestore se LIVE load hote hain (demo data khatam)
+    private val _children = MutableStateFlow<List<Child>>(emptyList())
     val children: StateFlow<List<Child>> = _children.asStateFlow()
 
-    private val _selectedChildId = MutableStateFlow<String>("child_zain")
+    private val _selectedChildId = MutableStateFlow<String>("")
     val selectedChildId: StateFlow<String> = _selectedChildId.asStateFlow()
 
     // Policies
@@ -257,9 +268,12 @@ class TawazunRepository {
             _currentSession.value = UserSession(
                 email = cleanEmail,
                 role = UserRole.PARENT,
+                familyId = auth.currentUser?.uid ?: "",
                 isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
                 consentAccepted = true
             )
+            val uid = auth.currentUser?.uid
+            if (uid != null) startFamilySession(uid, cleanEmail)
             addAudit("PARENT_SIGNUP", cleanEmail, "New parent account created via Firebase Auth.")
             true
         } catch (e: Exception) {
@@ -281,9 +295,12 @@ class TawazunRepository {
             _currentSession.value = UserSession(
                 email = cleanEmail,
                 role = UserRole.PARENT,
+                familyId = auth.currentUser?.uid ?: "",
                 isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
                 consentAccepted = true
             )
+            val uid = auth.currentUser?.uid
+            if (uid != null) startFamilySession(uid, cleanEmail)
             addAudit("PARENT_LOGIN", cleanEmail, "Parent logged in via Firebase Auth. Student data is now viewable by verified parent.")
             true
         } catch (e: Exception) {
@@ -294,7 +311,8 @@ class TawazunRepository {
         }
     }
 
-    /** Naya STUDENT account banao (email + password) — asli Firebase Auth. */
+    /** Naya STUDENT account banao (email + password) — asli Firebase Auth.
+     *  Pehle check: parent ne ye email apni family mein add kiya hai ya nahi. */
     suspend fun signUpStudent(email: String, password: String): Boolean {
         val cleanEmail = email.trim()
         if (password.length < 6) {
@@ -303,22 +321,29 @@ class TawazunRepository {
         }
         _authLoading.value = true
         return try {
+            val child = findChildByEmail(cleanEmail)
+            if (child == null) {
+                _authError.value = "Ye email abhi kisi family mein add nahi. Parent se pehle apne app par add karwayein."
+                return false
+            }
             withContext(Dispatchers.IO) {
                 Tasks.await(auth.createUserWithEmailAndPassword(cleanEmail, password))
                 // Asli email check: Firebase inbox mein verify-link email bhejta hai
                 auth.currentUser?.sendEmailVerification()
             }
-            val matchedChild = _children.value.find { it.studentEmail.equals(cleanEmail, ignoreCase = true) }
-                ?: _children.value.first()
+            linkStudentToChild(child, auth.currentUser?.uid)
+            _children.value = listOf(child)
             _currentSession.value = UserSession(
                 email = cleanEmail,
                 role = UserRole.STUDENT,
-                childId = matchedChild.id,
+                familyId = child.familyId,
+                childId = child.id,
                 isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
                 consentAccepted = true
             )
-            _selectedChildId.value = matchedChild.id
-            addAudit("STUDENT_SIGNUP", cleanEmail, "New student account created via Firebase Auth (${matchedChild.name}).")
+            _selectedChildId.value = child.id
+            attachChildrenListener(child.familyId)
+            addAudit("STUDENT_SIGNUP", cleanEmail, "New student account created via Firebase Auth (${child.name}).")
             true
         } catch (e: Exception) {
             _authError.value = friendlyAuthError(e)
@@ -328,25 +353,32 @@ class TawazunRepository {
         }
     }
 
-    /** Student REAL login (email + password). */
+    /** Student REAL login (email + password) — Firestore mein parent ke add kiye bachay se match hota hai. */
     suspend fun signInStudent(email: String, password: String): Boolean {
         val cleanEmail = email.trim()
         _authLoading.value = true
         return try {
+            val child = findChildByEmail(cleanEmail)
+            if (child == null) {
+                _authError.value = "Ye email abhi kisi family mein add nahi. Parent se pehle apne app par add karwayein."
+                return false
+            }
             withContext(Dispatchers.IO) {
                 Tasks.await(auth.signInWithEmailAndPassword(cleanEmail, password))
             }
-            val matchedChild = _children.value.find { it.studentEmail.equals(cleanEmail, ignoreCase = true) }
-                ?: _children.value.first()
+            linkStudentToChild(child, auth.currentUser?.uid)
+            _children.value = listOf(child)
             _currentSession.value = UserSession(
                 email = cleanEmail,
                 role = UserRole.STUDENT,
-                childId = matchedChild.id,
+                familyId = child.familyId,
+                childId = child.id,
                 isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
                 consentAccepted = true
             )
-            _selectedChildId.value = matchedChild.id
-            addAudit("STUDENT_LOGIN", cleanEmail, "Student logged in via Firebase Auth on device (${matchedChild.name}). Parental monitoring view is locked.")
+            _selectedChildId.value = child.id
+            attachChildrenListener(child.familyId)
+            addAudit("STUDENT_LOGIN", cleanEmail, "Student logged in via Firebase Auth on device (${child.name}). Parental monitoring view is locked.")
             true
         } catch (e: Exception) {
             _authError.value = friendlyAuthError(e)
@@ -368,9 +400,11 @@ class TawazunRepository {
             _currentSession.value = UserSession(
                 email = user?.email ?: "",
                 role = UserRole.PARENT,
+                familyId = user?.uid ?: "",
                 isEmailVerified = user?.isEmailVerified ?: true,
                 consentAccepted = true
             )
+            if (user != null) startFamilySession(user.uid, user.email ?: "")
             addAudit("PARENT_LOGIN", user?.email ?: "google-user", "Parent logged in with Google Sign-In (Firebase Auth).")
             true
         } catch (e: Exception) {
@@ -392,12 +426,151 @@ class TawazunRepository {
 
     fun logout() {
         val prevSession = _currentSession.value
+        familyListener?.remove()
+        familyListener = null
+        _children.value = emptyList()
+        _selectedChildId.value = ""
         _currentSession.value = null
         // Firebase se bhi asli sign out
         auth.signOut()
         if (prevSession != null) {
             addAudit("LOGOUT", prevSession.email, "Session logged out (${prevSession.role}).")
         }
+    }
+
+    // --- FAMILY DATA (Firestore) ---
+
+    /** Parent ka family document banao (agar nahi hai) aur bachon ka LIVE listener lagao. */
+    private fun startFamilySession(uid: String, email: String) {
+        if (email.isNotBlank()) {
+            db.collection("families").document(uid).set(
+                mapOf(
+                    "parentEmail" to email,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                ),
+                SetOptions.merge()
+            )
+        }
+        attachChildrenListener(uid)
+    }
+
+    /** Family ke bachon par LIVE listener — Firestore mein koi change ho to app khud update hota hai. */
+    private fun attachChildrenListener(familyId: String) {
+        familyListener?.remove()
+        _childrenLoading.value = true
+        familyListener = db.collection("families").document(familyId).collection("children")
+            .addSnapshotListener { snapshot, error ->
+                _childrenLoading.value = false
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val list = snapshot.documents.mapNotNull { it.toChild() }
+                _children.value = list
+                val selected = _selectedChildId.value
+                if (list.isNotEmpty() && list.none { it.id == selected }) {
+                    _selectedChildId.value = list.first().id
+                }
+            }
+    }
+
+    /** Firestore mein is email ka bacha dhoondo (sari families ke children mein). */
+    private suspend fun findChildByEmail(email: String): Child? = withContext(Dispatchers.IO) {
+        try {
+            val snap = Tasks.await(
+                db.collectionGroup("children").whereEqualTo("studentEmail", email).limit(1).get()
+            )
+            snap.documents.firstOrNull()?.toChild()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Student ka naya account is bachay se link karo (security rules ke liye). */
+    private fun linkStudentToChild(child: Child, uid: String?) {
+        if (uid == null || child.studentAuthUid == uid) return
+        db.collection("families").document(child.familyId)
+            .collection("children").document(child.id)
+            .update("studentAuthUid", uid)
+    }
+
+    /** Parent apne family mein naya bacha add kare — Firestore mein hamesha ke liye mehfooz. */
+    fun addChild(name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String) {
+        val parentUid = auth.currentUser?.uid ?: return
+        val cleanEmail = studentEmail.trim()
+        if (name.isBlank() || !cleanEmail.contains("@")) {
+            _authError.value = "Bachay ka naam aur sahi email zaroori hai."
+            return
+        }
+        val docRef = db.collection("families").document(parentUid).collection("children").document()
+        val child = Child(
+            id = docRef.id,
+            familyId = parentUid,
+            name = name.trim(),
+            grade = grade.trim().ifBlank { "Not set" },
+            avatarEmoji = avatarEmoji.ifBlank { "🧑" },
+            deviceModel = deviceModel.trim().ifBlank { "Not paired yet" },
+            studentEmail = cleanEmail,
+            pairingCode = "TWZ-" + (1000..9999).random()
+        )
+        docRef.set(child.toMap())
+            .addOnSuccessListener {
+                // Naye bachay ke liye starter policies
+                _policies.value = _policies.value + (child.id to starterPolicies())
+                _selectedChildId.value = child.id
+                addAudit("CHILD_ADDED", _currentSession.value?.email ?: "Parent", "New child added: ${child.name} (${cleanEmail})")
+            }
+            .addOnFailureListener { e ->
+                _authError.value = "Bacha save nahi hua: ${e.message}"
+            }
+    }
+
+    /** Naye bachay ke liye shuruaati app limits. */
+    private fun starterPolicies(): List<AppPolicy> = listOf(
+        AppPolicy("whatsapp", "WhatsApp (School & Family)", AppCategory.COMMUNICATION, "💬", dailyLimitMin = 60, usedTodayMin = 0, groupName = "Chat Apps"),
+        AppPolicy("khan_academy", "Khan Academy Urdu", AppCategory.EDUCATION, "📚", dailyLimitMin = 180, usedTodayMin = 0),
+        AppPolicy("youtube", "YouTube", AppCategory.ENTERTAINMENT, "▶️", dailyLimitMin = 45, usedTodayMin = 0, groupName = "Social & Gaming"),
+        AppPolicy("tiktok", "TikTok", AppCategory.ENTERTAINMENT, "🎵", dailyLimitMin = 0, usedTodayMin = 0, groupName = "Social & Gaming")
+    )
+
+    /** Child ko Firestore document banane ke liye map mein badlo. */
+    private fun Child.toMap(): Map<String, Any?> = mapOf(
+        "id" to id,
+        "familyId" to familyId,
+        "name" to name,
+        "grade" to grade,
+        "avatarEmoji" to avatarEmoji,
+        "deviceModel" to deviceModel,
+        "studentEmail" to studentEmail,
+        "homeworkUnlocked" to homeworkUnlocked,
+        "bedtimeStart" to bedtimeStart,
+        "bedtimeEnd" to bedtimeEnd,
+        "bedtimeActiveDays" to bedtimeActiveDays,
+        "mirroringActive" to mirroringActive,
+        "pairingCode" to pairingCode,
+        "isRevoked" to isRevoked,
+        "studentAuthUid" to studentAuthUid
+    )
+
+    /** Firestore document se Child wapas banao. */
+    private fun DocumentSnapshot.toChild(): Child? = try {
+        Child(
+            id = id,
+            familyId = getString("familyId") ?: "",
+            name = getString("name") ?: "",
+            grade = getString("grade") ?: "",
+            avatarEmoji = getString("avatarEmoji") ?: "🧑",
+            deviceModel = getString("deviceModel") ?: "Not paired yet",
+            studentEmail = getString("studentEmail") ?: "",
+            homeworkUnlocked = getBoolean("homeworkUnlocked") ?: false,
+            bedtimeStart = getString("bedtimeStart") ?: "22:00",
+            bedtimeEnd = getString("bedtimeEnd") ?: "06:30",
+            bedtimeActiveDays = (get("bedtimeActiveDays") as? List<*>)?.mapNotNull { (it as? Long)?.toInt() }
+                ?: listOf(1, 2, 3, 4, 5, 6, 7),
+            mirroringActive = getBoolean("mirroringActive") ?: false,
+            pairingCode = getString("pairingCode") ?: "TWZ-0000",
+            isRevoked = getBoolean("isRevoked") ?: false,
+            studentAuthUid = getString("studentAuthUid")
+        )
+    } catch (e: Exception) {
+        null
     }
 
     /** Firebase errors ko asaan messages mein badlo. */
