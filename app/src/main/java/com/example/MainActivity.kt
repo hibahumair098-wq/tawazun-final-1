@@ -21,7 +21,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.data.ai.TawazunAiService
 import com.example.data.model.UserRole
 import com.example.data.repository.TawazunRepository
 import com.example.ui.auth.AuthScreen
@@ -49,6 +48,8 @@ class MainActivity : ComponentActivity() {
             TawazunTheme(darkTheme = true) {
                 val repository = remember { TawazunRepository() }
                 val session by repository.currentSession.collectAsState()
+                val authError by repository.authError.collectAsState()
+                val authLoading by repository.authLoading.collectAsState()
                 val context = LocalContext.current
                 val coroutineScope = rememberCoroutineScope()
                 val credentialManager = remember { CredentialManager.create(context) }
@@ -57,12 +58,22 @@ class MainActivity : ComponentActivity() {
                     when (val current = session) {
                         null -> {
                             AuthScreen(
-                                onParentLogin = { email -> repository.loginAsParent(email) },
-                                onStudentLogin = { email -> repository.loginAsStudent(email) },
+                                onParentAuth = { email, password, isSignUp ->
+                                    coroutineScope.launch {
+                                        if (isSignUp) repository.signUpParent(email, password)
+                                        else repository.signInParent(email, password)
+                                    }
+                                },
+                                onStudentAuth = { email, password, isSignUp ->
+                                    coroutineScope.launch {
+                                        if (isSignUp) repository.signUpStudent(email, password)
+                                        else repository.signInStudent(email, password)
+                                    }
+                                },
                                 onGoogleSignIn = {
-                                    // NOTE: google-services.json add hone ke baad wapas
-                                    // R.string.default_web_client_id use karna
-                                    val clientId = "160513495828-p7hbu9js0hde5cpp5d1upqrg5i2rfgp1.apps.googleusercontent.com"
+                                    // Naye Firebase project (tawzun-dca15) ka web client ID —
+                                    // google-services.json se auto-generate hota hai
+                                    val clientId = context.getString(R.string.default_web_client_id)
                                     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
                                     val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
 
@@ -72,18 +83,20 @@ class MainActivity : ComponentActivity() {
                                             val credential = result.credential
                                             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                                                // Sign in parent with verified Google token email
-                                                val email = GoogleIdTokenCredential.createFrom(credential.data).id
-                                                repository.loginAsParent(email.ifBlank { "parent.google@gmail.com" })
+                                                // REAL Firebase login with Google token
+                                                repository.loginWithGoogleIdToken(googleIdToken)
                                             }
                                         } catch (e: GetCredentialCancellationException) {
                                             Log.w(TAG, "Google Sign-In cancelled: ${e.message}", e)
                                         } catch (e: Exception) {
                                             Log.e(TAG, "Google Sign-In error", e)
-                                            // SECURITY FIX: error par ab login NAHI hota (pehle yahan fake login tha)
+                                            // SECURITY: error par login NAHI hota
                                         }
                                     }
                                 },
+                                authError = authError,
+                                authLoading = authLoading,
+                                onDismissError = { repository.clearAuthError() },
                                 modifier = Modifier.padding(innerPadding)
                             )
                         }
