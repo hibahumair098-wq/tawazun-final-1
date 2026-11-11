@@ -12,19 +12,54 @@ import com.example.data.model.UserRole
 import com.example.data.model.UserSession
 import com.example.data.model.WebAttempt
 import com.example.domain.DomainFilter
+import com.google.android.gms.tasks.Tasks
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.FirebaseAuthWeakPasswordException
+import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.util.concurrent.ExecutionException
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 class TawazunRepository {
 
+    // REAL Firebase Authentication engine
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
     val currentSession: StateFlow<UserSession?> = _currentSession.asStateFlow()
+
+    // Auth UI state: error message + loading indicator
+    private val _authError = MutableStateFlow<String?>(null)
+    val authError: StateFlow<String?> = _authError.asStateFlow()
+
+    private val _authLoading = MutableStateFlow(false)
+    val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
+
+    init {
+        // App restart par agar Firebase user logged in hai to session restore karo
+        auth.addAuthStateListener { firebaseAuth ->
+            val user = firebaseAuth.currentUser
+            if (user != null && _currentSession.value == null) {
+                _currentSession.value = UserSession(
+                    email = user.email ?: "",
+                    role = UserRole.PARENT,
+                    isEmailVerified = user.isEmailVerified,
+                    consentAccepted = true
+                )
+            }
+        }
+    }
 
     // Children in family
     private val _children = MutableStateFlow<List<Child>>(
@@ -203,44 +238,168 @@ class TawazunRepository {
     private val _subscription = MutableStateFlow(SubscriptionInfo())
     val subscription: StateFlow<SubscriptionInfo> = _subscription.asStateFlow()
 
-    // --- AUTHENTICATION METHODS ---
+    // --- REAL AUTHENTICATION (Firebase Auth) ---
 
-    /**
-     * Parent logs in with email.
-     * Guaranteed: Student session is cleared, parent sees monitoring dashboard.
-     */
-    fun loginAsParent(email: String) {
-        _currentSession.value = UserSession(
-            email = email.trim(),
-            role = UserRole.PARENT,
-            isEmailVerified = true,
-            consentAccepted = true
-        )
-        addAudit("PARENT_LOGIN", email, "Parent logged in. Student data is now viewable by verified parent.")
+    /** Naya PARENT account banao (email + password) — asli Firebase Auth. */
+    suspend fun signUpParent(email: String, password: String): Boolean {
+        val cleanEmail = email.trim()
+        if (password.length < 6) {
+            _authError.value = "Password must be at least 6 characters."
+            return false
+        }
+        _authLoading.value = true
+        return try {
+            withContext(Dispatchers.IO) {
+                Tasks.await(auth.createUserWithEmailAndPassword(cleanEmail, password))
+            }
+            _currentSession.value = UserSession(
+                email = cleanEmail,
+                role = UserRole.PARENT,
+                isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
+                consentAccepted = true
+            )
+            addAudit("PARENT_SIGNUP", cleanEmail, "New parent account created via Firebase Auth.")
+            true
+        } catch (e: Exception) {
+            _authError.value = friendlyAuthError(e)
+            false
+        } finally {
+            _authLoading.value = false
+        }
     }
 
-    /**
-     * Student logs in with student email.
-     * Enforces prompt constraint: "Student's data will only be visible when the student's account
-     * is logged out and the parent's account is logged in, through the email addresses."
-     */
-    fun loginAsStudent(email: String) {
-        val matchedChild = _children.value.find { it.studentEmail.equals(email.trim(), ignoreCase = true) }
-            ?: _children.value.first()
-        _currentSession.value = UserSession(
-            email = email.trim(),
-            role = UserRole.STUDENT,
-            childId = matchedChild.id
-        )
-        _selectedChildId.value = matchedChild.id
-        addAudit("STUDENT_LOGIN", email, "Student logged in on device (${matchedChild.name}). Parental monitoring view is locked.")
+    /** Parent REAL login — galat password par login NAHI hota. */
+    suspend fun signInParent(email: String, password: String): Boolean {
+        val cleanEmail = email.trim()
+        _authLoading.value = true
+        return try {
+            withContext(Dispatchers.IO) {
+                Tasks.await(auth.signInWithEmailAndPassword(cleanEmail, password))
+            }
+            _currentSession.value = UserSession(
+                email = cleanEmail,
+                role = UserRole.PARENT,
+                isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
+                consentAccepted = true
+            )
+            addAudit("PARENT_LOGIN", cleanEmail, "Parent logged in via Firebase Auth. Student data is now viewable by verified parent.")
+            true
+        } catch (e: Exception) {
+            _authError.value = friendlyAuthError(e)
+            false
+        } finally {
+            _authLoading.value = false
+        }
+    }
+
+    /** Naya STUDENT account banao (email + password) — asli Firebase Auth. */
+    suspend fun signUpStudent(email: String, password: String): Boolean {
+        val cleanEmail = email.trim()
+        if (password.length < 6) {
+            _authError.value = "Password must be at least 6 characters."
+            return false
+        }
+        _authLoading.value = true
+        return try {
+            withContext(Dispatchers.IO) {
+                Tasks.await(auth.createUserWithEmailAndPassword(cleanEmail, password))
+            }
+            val matchedChild = _children.value.find { it.studentEmail.equals(cleanEmail, ignoreCase = true) }
+                ?: _children.value.first()
+            _currentSession.value = UserSession(
+                email = cleanEmail,
+                role = UserRole.STUDENT,
+                childId = matchedChild.id,
+                isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
+                consentAccepted = true
+            )
+            _selectedChildId.value = matchedChild.id
+            addAudit("STUDENT_SIGNUP", cleanEmail, "New student account created via Firebase Auth (${matchedChild.name}).")
+            true
+        } catch (e: Exception) {
+            _authError.value = friendlyAuthError(e)
+            false
+        } finally {
+            _authLoading.value = false
+        }
+    }
+
+    /** Student REAL login (email + password). */
+    suspend fun signInStudent(email: String, password: String): Boolean {
+        val cleanEmail = email.trim()
+        _authLoading.value = true
+        return try {
+            withContext(Dispatchers.IO) {
+                Tasks.await(auth.signInWithEmailAndPassword(cleanEmail, password))
+            }
+            val matchedChild = _children.value.find { it.studentEmail.equals(cleanEmail, ignoreCase = true) }
+                ?: _children.value.first()
+            _currentSession.value = UserSession(
+                email = cleanEmail,
+                role = UserRole.STUDENT,
+                childId = matchedChild.id,
+                isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
+                consentAccepted = true
+            )
+            _selectedChildId.value = matchedChild.id
+            addAudit("STUDENT_LOGIN", cleanEmail, "Student logged in via Firebase Auth on device (${matchedChild.name}). Parental monitoring view is locked.")
+            true
+        } catch (e: Exception) {
+            _authError.value = friendlyAuthError(e)
+            false
+        } finally {
+            _authLoading.value = false
+        }
+    }
+
+    /** Google Sign-In ka asli Firebase login (idToken se). */
+    suspend fun loginWithGoogleIdToken(idToken: String): Boolean {
+        _authLoading.value = true
+        return try {
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            withContext(Dispatchers.IO) {
+                Tasks.await(auth.signInWithCredential(credential))
+            }
+            val user = auth.currentUser
+            _currentSession.value = UserSession(
+                email = user?.email ?: "",
+                role = UserRole.PARENT,
+                isEmailVerified = user?.isEmailVerified ?: true,
+                consentAccepted = true
+            )
+            addAudit("PARENT_LOGIN", user?.email ?: "google-user", "Parent logged in with Google Sign-In (Firebase Auth).")
+            true
+        } catch (e: Exception) {
+            _authError.value = friendlyAuthError(e)
+            false
+        } finally {
+            _authLoading.value = false
+        }
+    }
+
+    fun clearAuthError() {
+        _authError.value = null
     }
 
     fun logout() {
         val prevSession = _currentSession.value
         _currentSession.value = null
+        // Firebase se bhi asli sign out
+        auth.signOut()
         if (prevSession != null) {
             addAudit("LOGOUT", prevSession.email, "Session logged out (${prevSession.role}).")
+        }
+    }
+
+    /** Firebase errors ko asaan messages mein badlo. */
+    private fun friendlyAuthError(e: Exception): String {
+        val cause = (e as? ExecutionException)?.cause ?: e
+        return when (cause) {
+            is FirebaseAuthInvalidUserException -> "No account found with this email. Please Sign Up first."
+            is FirebaseAuthInvalidCredentialsException -> "Incorrect email or password. Please try again."
+            is FirebaseAuthWeakPasswordException -> "Weak password - use at least 6 characters."
+            is FirebaseAuthUserCollisionException -> "This email is already registered. Please Sign In."
+            else -> "Authentication error: ${cause.message ?: "unknown error"}"
         }
     }
 
