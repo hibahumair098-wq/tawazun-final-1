@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,16 +69,21 @@ import com.example.ui.theme.TawazunWarningAmber
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuthScreen(
-    onParentLogin: (String) -> Unit,
-    onStudentLogin: (String) -> Unit,
+    onParentAuth: (email: String, password: String, isSignUp: Boolean) -> Unit,
+    onStudentAuth: (email: String, password: String, isSignUp: Boolean) -> Unit,
     onGoogleSignIn: (() -> Unit)? = null,
+    authError: String? = null,
+    authLoading: Boolean = false,
+    onDismissError: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Parent, 1 = Student
-    var parentEmail by remember { mutableStateOf("parent.ahmed@gmail.com") }
-    var studentEmail by remember { mutableStateOf("student.zain@gmail.com") }
-    var password by remember { mutableStateOf("••••••••") }
-    var consentChecked by remember { mutableStateOf(true) }
+    var parentEmail by remember { mutableStateOf("") }
+    var studentEmail by remember { mutableStateOf("") }
+    var parentPassword by remember { mutableStateOf("") }
+    var studentPassword by remember { mutableStateOf("") }
+    var isSignUp by remember { mutableStateOf(false) }
+    var consentChecked by remember { mutableStateOf(false) }
     var showConsentDialog by remember { mutableStateOf(false) }
 
     Column(
@@ -193,6 +199,30 @@ fun AuthScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // REAL Auth error message (Firebase se)
+        if (authError != null) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                colors = CardDefaults.cardColors(containerColor = TawazunWarningAmber),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = authError,
+                        fontSize = 12.sp,
+                        color = Color.Black,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onDismissError) { Text("OK") }
+                }
+            }
+        }
+
         if (selectedTab == 0) {
             // --- PARENT LOGIN FORM ---
             Card(
@@ -229,10 +259,11 @@ fun AuthScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Password or Email-Link") },
+                        value = parentPassword,
+                        onValueChange = { parentPassword = it },
+                        label = { Text("Password (min 6 characters)") },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -261,8 +292,8 @@ fun AuthScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Button(
-                        onClick = { onParentLogin(parentEmail) },
-                        enabled = parentEmail.isNotBlank() && consentChecked,
+                        onClick = { onParentAuth(parentEmail, parentPassword, isSignUp) },
+                        enabled = !authLoading && parentEmail.contains("@") && parentPassword.length >= 6 && consentChecked,
                         colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
@@ -270,20 +301,28 @@ fun AuthScreen(
                             .height(48.dp)
                             .testTag("parent_login_button")
                     ) {
-                        Text("Sign In as Parent", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            when {
+                                authLoading -> "Please wait..."
+                                isSignUp -> "Create Parent Account"
+                                else -> "Sign In as Parent"
+                            },
+                            fontSize = 16.sp, fontWeight = FontWeight.Bold
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedButton(
-                        onClick = {
-                            parentEmail = "parent.ahmed@gmail.com"
-                            onParentLogin("parent.ahmed@gmail.com")
-                        },
-                        shape = RoundedCornerShape(8.dp),
+                    TextButton(
+                        onClick = { isSignUp = !isSignUp },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Demo: Sign in as Ahmed (Parent of Zain & Ayla)", fontSize = 13.sp)
+                        Text(
+                            if (isSignUp) "Already have an account? Sign In"
+                            else "New here? Create an account (Sign Up)",
+                            fontSize = 13.sp,
+                            color = TawazunEmeraldPrimary
+                        )
                     }
 
                     if (onGoogleSignIn != null) {
@@ -338,19 +377,20 @@ fun AuthScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     OutlinedTextField(
-                        value = "••••••••",
-                        onValueChange = {},
-                        label = { Text("Student Device PIN / Password") },
+                        value = studentPassword,
+                        onValueChange = { studentPassword = it },
+                        label = { Text("Password (min 6 characters)") },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
-                        readOnly = true
+                        singleLine = true
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Button(
-                        onClick = { onStudentLogin(studentEmail) },
-                        enabled = studentEmail.isNotBlank(),
+                        onClick = { onStudentAuth(studentEmail, studentPassword, isSignUp) },
+                        enabled = !authLoading && studentEmail.contains("@") && studentPassword.length >= 6,
                         colors = ButtonDefaults.buttonColors(containerColor = TawazunGold),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
@@ -358,20 +398,28 @@ fun AuthScreen(
                             .height(48.dp)
                             .testTag("student_login_button")
                     ) {
-                        Text("Log In as Student", color = Color.Black, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            when {
+                                authLoading -> "Please wait..."
+                                isSignUp -> "Create Student Account"
+                                else -> "Log In as Student"
+                            },
+                            color = Color.Black, fontSize = 16.sp, fontWeight = FontWeight.Bold
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedButton(
-                        onClick = {
-                            studentEmail = "student.zain@gmail.com"
-                            onStudentLogin("student.zain@gmail.com")
-                        },
-                        shape = RoundedCornerShape(8.dp),
+                    TextButton(
+                        onClick = { isSignUp = !isSignUp },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Demo: Log In as Zain (Grade 9)", fontSize = 13.sp)
+                        Text(
+                            if (isSignUp) "Already have an account? Log In"
+                            else "New student? Create an account (Sign Up)",
+                            fontSize = 13.sp,
+                            color = TawazunEmeraldPrimary
+                        )
                     }
                 }
             }
