@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "253103655441",
+    "project_id": "tawzun-dca15",
+    "storage_bucket": "tawzun-dca15.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:253103655441:android:ae9b3ebbe6028cbe353fb0",
+        "android_client_info": {
+          "package_name": "com.tawazun.pksafe"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "253103655441-l50m4aj592qtk6l80arc2r9tl85fhe6f.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tawazun.pksafe",
+            "certificate_hash": "e34b79c0b69c71858c14a04990767440c4c7528b"
+          }
+        },
+        {
+          "client_id": "253103655441-dhmhg8p69tbtvfarcgfkjrrueedtdt7r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDo_8Ycp3SKtSSKFe3eQZcRIEaNWgZUs9Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "253103655441-dhmhg8p69tbtvfarcgfkjrrueedtdt7r.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
