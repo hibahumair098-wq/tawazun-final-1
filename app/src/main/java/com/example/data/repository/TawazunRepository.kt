@@ -11,6 +11,8 @@ import com.example.data.model.UsageEvent
 import com.example.data.model.UserRole
 import com.example.data.model.UserSession
 import com.example.data.model.WebAttempt
+import android.content.Context
+import com.example.data.usage.UsageTracker
 import com.example.domain.DomainFilter
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
@@ -49,6 +51,7 @@ class TawazunRepository {
     private var familyListener: ListenerRegistration? = null
     private var homeworkListener: ListenerRegistration? = null
     private var policiesListener: ListenerRegistration? = null
+    private var usageListener: ListenerRegistration? = null
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -129,14 +132,8 @@ class TawazunRepository {
     val homeworkTasks: StateFlow<List<HomeworkTask>> = _homeworkTasks.asStateFlow()
 
     // 3-Day Window Usage Events
-    private val _usageEvents = MutableStateFlow<List<UsageEvent>>(
-        listOf(
-            UsageEvent("ue_1", "child_zain", "whatsapp", "WhatsApp (School & Family)", System.currentTimeMillis() - 25 * 60 * 1000, 25),
-            UsageEvent("ue_2", "child_zain", "khan_academy", "Khan Academy Urdu", System.currentTimeMillis() - 70 * 60 * 1000, 45),
-            UsageEvent("ue_3", "child_zain", "free_fire", "Free Fire MAX", System.currentTimeMillis() - 130 * 60 * 1000, 10),
-            UsageEvent("ue_4", "child_zain", "youtube", "YouTube", System.currentTimeMillis() - 200 * 60 * 1000, 25)
-        )
-    )
+    // Usage events — student device se ASLI data (Firestore se LIVE)
+    private val _usageEvents = MutableStateFlow<List<UsageEvent>>(emptyList())
     val usageEvents: StateFlow<List<UsageEvent>> = _usageEvents.asStateFlow()
 
     // Web Attempts
@@ -394,10 +391,13 @@ class TawazunRepository {
         homeworkListener = null
         policiesListener?.remove()
         policiesListener = null
+        usageListener?.remove()
+        usageListener = null
         _children.value = emptyList()
         _selectedChildId.value = ""
         _homeworkTasks.value = emptyList()
         _policies.value = emptyMap()
+        _usageEvents.value = emptyList()
         _currentSession.value = null
         // Firebase se bhi asli sign out
         auth.signOut()
@@ -439,6 +439,80 @@ class TawazunRepository {
             }
         attachHomeworkListener(familyId)
         attachPoliciesListener(familyId)
+        attachUsageListener(familyId)
+    }
+
+    /** Usage events — LIVE (student phone par jo chale, parent ko dikhta hai). */
+    private fun attachUsageListener(familyId: String) {
+        usageListener?.remove()
+        usageListener = db.collection("families").document(familyId).collection("usage")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _usageEvents.value = snapshot.documents.mapNotNull { doc ->
+                    val childId = doc.getString("childId")
+                    val appKey = doc.getString("appKey")
+                    if (childId == null || appKey == null) {
+                        null
+                    } else {
+                        UsageEvent(
+                            id = doc.id,
+                            childId = childId,
+                            appKey = appKey,
+                            appName = doc.getString("appName") ?: appKey,
+                            startedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis(),
+                            durationMin = (doc.getLong("minutesUsed") ?: 0L).toInt()
+                        )
+                    }
+                }
+            }
+    }
+
+    /**
+     * ASLI USAGE SYNC — student device par chalti hai:
+     * Android se aaj ka per-app usage parho → policies usedTodayMin update +
+     * Firestore mein usage summary likho (parent LIVE dekh ta hai).
+     */
+    fun refreshTodayUsage(context: Context) {
+        val session = _currentSession.value ?: return
+        if (session.role != UserRole.STUDENT) return
+        val childId = session.childId ?: return
+        val familyId = session.familyId
+
+        val usage = UsageTracker.todayUsageMinutes(context)
+        if (usage.isEmpty()) return
+
+        // 1) Local policies update (student ke phone par UI turant)
+        val current = _policies.value[childId] ?: emptyList()
+        val updated = current.map { p ->
+            if (usage.containsKey(p.appKey)) p.copy(usedTodayMin = usage.getValue(p.appKey)) else p
+        }
+        _policies.value = _policies.value.toMutableMap().apply { put(childId, updated) }
+
+        // 2) Cloud sync: policy usedTodayMin + daily usage summary
+        val policiesRef = db.collection("families").document(familyId).collection("policies")
+        val usageRef = db.collection("families").document(familyId).collection("usage")
+        val dateStr = UsageTracker.todayDateString()
+        updated.forEach { p ->
+            val minutes = usage[p.appKey] ?: return@forEach
+            policiesRef.document("${childId}_${p.appKey}")
+                .update("usedTodayMin", minutes)
+                .addOnFailureListener {
+                    policiesRef.document("${childId}_${p.appKey}")
+                        .set(p.toPolicyMap(childId), SetOptions.merge())
+                }
+            usageRef.document("${childId}_${dateStr}_${p.appKey}").set(
+                mapOf(
+                    "childId" to childId,
+                    "appKey" to p.appKey,
+                    "appName" to p.appName,
+                    "minutesUsed" to minutes,
+                    "date" to dateStr,
+                    "updatedAt" to System.currentTimeMillis()
+                ),
+                SetOptions.merge()
+            )
+        }
+        addAudit("USAGE_SYNC", session.email, "Real usage synced for $dateStr (${usage.size} apps).")
     }
 
     /** Homework tasks — LIVE (parent add kare to student ke phone par foran dikhta hai). */
