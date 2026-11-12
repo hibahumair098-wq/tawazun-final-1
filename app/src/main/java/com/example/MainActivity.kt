@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             TawazunTheme(darkTheme = true) {
-                val repository = remember { TawazunRepository() }
+                val repository = remember { TawazunRepository(applicationContext) }
                 val session by repository.currentSession.collectAsState()
                 val authError by repository.authError.collectAsState()
                 val authLoading by repository.authLoading.collectAsState()
