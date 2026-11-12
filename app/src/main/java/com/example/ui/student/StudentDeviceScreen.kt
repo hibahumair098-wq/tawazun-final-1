@@ -1,5 +1,7 @@
 package com.example.ui.student
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -58,6 +60,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -68,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -78,6 +82,7 @@ import com.example.data.model.AppPolicy
 import com.example.data.model.Child
 import com.example.data.model.HomeworkTask
 import com.example.data.repository.TawazunRepository
+import com.example.data.usage.UsageTracker
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunErrorRed
@@ -114,6 +119,14 @@ fun StudentDeviceScreen(
     var browserUrl by remember { mutableStateOf("https://ilmkidunya.com/past-papers") }
     var browserResult by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
     var chatMessageDraft by remember { mutableStateOf("") }
+
+    // --- ASLI USAGE TRACKING (UsageStatsManager) ---
+    val context = LocalContext.current
+    var usageAccessGranted by remember { mutableStateOf(UsageTracker.hasUsageAccess(context)) }
+    LaunchedEffect(Unit) {
+        // App khulne par aaj ka asli usage parh kar cloud sync karo
+        repository.refreshTodayUsage(context)
+    }
 
     val isBedtime = repository.isBedtimeActive(currentChild)
 
@@ -254,6 +267,58 @@ fun StudentDeviceScreen(
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
+            // 📊 Usage Access banner — asli tracking ke liye ek dafa permission
+            if (!usageAccessGranted) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunWarningAmber),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "📊 Asli App Usage Tracking ON karein",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color.Black
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Tawazun ko batane ke liye ke aap ne YouTube/WhatsApp kitna use kiya — ek dafa \"Usage Access\" permission dein. Parent ko asli timing dikhti hai.",
+                            fontSize = 11.sp,
+                            color = Color.Black,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row {
+                            Button(
+                                onClick = {
+                                    context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Text("Settings Kholo", fontSize = 12.sp, color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    usageAccessGranted = UsageTracker.hasUsageAccess(context)
+                                    if (usageAccessGranted) {
+                                        repository.refreshTodayUsage(context)
+                                    }
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Text("✓ Check Dobara", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
             when (currentTab) {
                 0 -> StudentBalanceTab(
                     child = currentChild,
