@@ -2,4 +2,5 @@
     <string name="app_name">Tawazun</string>
     <string name="tagline">Screen-time balance for Pakistani families</string>
     <string name="support_email">support@tawazun.pk</string>
+    <string name="guard_description">Tawazun Guard: blocks apps when the daily time limit set by the parent is exhausted or homework is not verified. Tawazun only reads app names, never screen content.</string>
 </resources>
