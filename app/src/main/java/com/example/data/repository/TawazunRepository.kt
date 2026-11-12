@@ -424,6 +424,19 @@ class TawazunRepository {
         auth.currentUser?.sendEmailVerification()
     }
 
+    /** "Maine link click kar diya" — Firebase se taaza status check karo. */
+    suspend fun refreshVerificationStatus() {
+        val user = auth.currentUser ?: return
+        withContext(Dispatchers.IO) {
+            Tasks.await(user.reload())
+        }
+        val session = _currentSession.value ?: return
+        if (user.isEmailVerified && !session.isEmailVerified) {
+            _currentSession.value = session.copy(isEmailVerified = true)
+            addAudit("EMAIL_VERIFIED", session.email, "Email verified successfully. Full access granted.")
+        }
+    }
+
     fun logout() {
         val prevSession = _currentSession.value
         familyListener?.remove()
