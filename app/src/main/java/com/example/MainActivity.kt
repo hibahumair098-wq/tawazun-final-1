@@ -7,14 +7,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
@@ -39,8 +44,11 @@ import com.example.data.repository.TawazunRepository
 import com.example.ui.auth.AuthScreen
 import com.example.ui.parent.ParentDashboardScreen
 import com.example.ui.student.StudentDeviceScreen
+import com.example.ui.theme.TawazunEmeraldPrimary
+import com.example.ui.theme.TawazunSurface
+import com.example.ui.theme.TawazunTextPrimary
+import com.example.ui.theme.TawazunTextSecondary
 import com.example.ui.theme.TawazunTheme
-import com.example.ui.theme.TawazunWarningAmber
 import com.example.util.configureAppCheck
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -119,58 +127,38 @@ class MainActivity : ComponentActivity() {
                                 repository.logout()
                             }
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(innerPadding)
-                            ) {
-                                // ⚠️ Email abhi VERIFY nahi hua — inbox mein link click karo
-                                if (!current.isEmailVerified) {
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                                        colors = CardDefaults.cardColors(containerColor = TawazunWarningAmber),
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = "⚠️ Email not verified",
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.Black
-                                                )
-                                                Text(
-                                                    text = "Apna inbox kholo aur \"Verify your email\" wala link click karo. Phir app dobara kholo.",
-                                                    fontSize = 11.sp,
-                                                    color = Color.Black
-                                                )
-                                            }
-                                            TextButton(onClick = { repository.resendVerificationEmail() }) {
-                                                Text("Resend", color = Color.Black)
-                                            }
+                            if (!current.isEmailVerified) {
+                                // 🔒 VERIFICATION GATE: jab tak email verify nahi, andar entry NAHI
+                                EmailVerificationGateScreen(
+                                    email = current.email,
+                                    onCheckAgain = {
+                                        coroutineScope.launch { repository.refreshVerificationStatus() }
+                                    },
+                                    onResend = { repository.resendVerificationEmail() },
+                                    onLogout = { repository.logout() },
+                                    modifier = Modifier.padding(innerPadding)
+                                )
+                            } else {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding)
+                                ) {
+                                    when (current.role) {
+                                        UserRole.PARENT -> {
+                                            ParentDashboardScreen(
+                                                repository = repository,
+                                                onLogout = { repository.logout() },
+                                                modifier = Modifier.weight(1f)
+                                            )
                                         }
-                                    }
-                                }
-
-                                when (current.role) {
-                                    UserRole.PARENT -> {
-                                        ParentDashboardScreen(
-                                            repository = repository,
-                                            onLogout = { repository.logout() },
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                    UserRole.STUDENT -> {
-                                        StudentDeviceScreen(
-                                            repository = repository,
-                                            onLogout = { repository.logout() },
-                                            modifier = Modifier.weight(1f)
-                                        )
+                                        UserRole.STUDENT -> {
+                                            StudentDeviceScreen(
+                                                repository = repository,
+                                                onLogout = { repository.logout() },
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -182,3 +170,69 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * 🔒 Email Verification Gate — verify hone tak app ka andar ka rasta band.
+ * User sirf 3 kaam kar sakta hai: link click karke "Check" dabana,
+ * email dobara mangaana, ya log out.
+ */
+@Composable
+fun EmailVerificationGateScreen(
+    email: String,
+    onCheckAgain: () -> Unit,
+    onResend: () -> Unit,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("📬", fontSize = 48.sp)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Email Verify Karein",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunTextPrimary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Hum ne verify-link bheja hai:\n$email\n\nApna inbox (aur SPAM folder) kholo aur \"Verify your email\" par click karo. Tab hi app mein entry milegi.",
+                    fontSize = 13.sp,
+                    color = TawazunTextSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 19.sp
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = onCheckAgain,
+                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("✅ Maine Link Click Kiya — Check Karo", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onResend,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("📧 Email Dobara Bhejo (Resend)", fontSize = 13.sp)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(onClick = onLogout) {
+                    Text("Log Out", fontSize = 12.sp, color = TawazunTextSecondary)
+                }
+            }
+        }
+    }
+}
