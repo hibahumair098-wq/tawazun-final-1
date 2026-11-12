@@ -431,7 +431,10 @@ fun ParentDashboardScreen(
                 1 -> HomeworkTab(
                     child = currentChild,
                     tasks = currentChildHomework,
-                    onVerify = { taskId, verified -> repository.verifyHomeworkByParent(taskId, verified) }
+                    onVerify = { taskId, verified -> repository.verifyHomeworkByParent(taskId, verified) },
+                    onAddTask = { title, subject, due ->
+                        repository.addHomeworkTask(currentChild.id, title, subject, due)
+                    }
                 )
                 2 -> RulesTab(
                     child = currentChild,
@@ -757,14 +760,39 @@ fun StatCard(
 fun HomeworkTab(
     child: Child,
     tasks: List<HomeworkTask>,
-    onVerify: (String, Boolean) -> Unit
+    onVerify: (String, Boolean) -> Unit,
+    onAddTask: (title: String, subject: String, dueTime: String) -> Unit
 ) {
+    var showAddDialog by remember { mutableStateOf(false) }
+
+    if (showAddDialog) {
+        AddHomeworkDialog(
+            onDismiss = { showAddDialog = false },
+            onAdd = { title, subject, due ->
+                onAddTask(title, subject, due)
+                showAddDialog = false
+            }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            Button(
+                onClick = { showAddDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            ) {
+                Text("➕ Naya Homework Add Karein", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
@@ -1438,6 +1466,60 @@ fun AddChildDialog(
                     )
                 },
                 enabled = name.isNotBlank() && email.contains("@"),
+                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
+            ) {
+                Text("Add Karein")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun AddHomeworkDialog(
+    onDismiss: () -> Unit,
+    onAdd: (title: String, subject: String, dueTime: String) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var subject by remember { mutableStateOf("") }
+    var due by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Naya Homework", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Kya homework hai? (e.g. Math Exercise 2.3)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = subject,
+                    onValueChange = { subject = it },
+                    label = { Text("Subject (e.g. Mathematics)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = due,
+                    onValueChange = { due = it },
+                    label = { Text("Kab tak? (e.g. Aaj shaam 6 baje)") },
+                    singleLine = true
+                )
+                Text(
+                    "Task cloud mein save hoga — bachay ke phone par foran dikhega.",
+                    fontSize = 11.sp,
+                    color = TawazunTextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onAdd(title.trim(), subject.trim(), due.trim()) },
+                enabled = title.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
             ) {
                 Text("Add Karein")
