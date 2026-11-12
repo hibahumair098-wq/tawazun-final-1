@@ -81,4 +81,7 @@ object UsageTracker {
     /** Aaj ki date string (Firestore doc IDs ke liye). */
     fun todayDateString(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(System.currentTimeMillis())
+
+    /** Kis app key ke kaunse Android packages hain (Guard ke liye). */
+    fun packagesFor(appKey: String): List<String>? = APP_PACKAGES[appKey]
 }
