@@ -47,6 +47,8 @@ class TawazunRepository {
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var familyListener: ListenerRegistration? = null
+    private var homeworkListener: ListenerRegistration? = null
+    private var policiesListener: ListenerRegistration? = null
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -106,25 +108,8 @@ class TawazunRepository {
     private val _selectedChildId = MutableStateFlow<String>("")
     val selectedChildId: StateFlow<String> = _selectedChildId.asStateFlow()
 
-    // Policies
-    private val _policies = MutableStateFlow<Map<String, List<AppPolicy>>>(
-        mapOf(
-            "child_zain" to listOf(
-                AppPolicy("whatsapp", "WhatsApp (School & Family)", AppCategory.COMMUNICATION, "💬", dailyLimitMin = 60, usedTodayMin = 40, groupName = "Chat Apps"),
-                AppPolicy("khan_academy", "Khan Academy Urdu", AppCategory.EDUCATION, "📚", dailyLimitMin = 180, usedTodayMin = 45),
-                AppPolicy("youtube", "YouTube", AppCategory.ENTERTAINMENT, "▶️", dailyLimitMin = 45, usedTodayMin = 25, groupName = "Social & Gaming"),
-                AppPolicy("free_fire", "Free Fire MAX", AppCategory.GAMING, "🎮", dailyLimitMin = 30, usedTodayMin = 10, groupName = "Social & Gaming"),
-                AppPolicy("tiktok", "TikTok", AppCategory.ENTERTAINMENT, "🎵", dailyLimitMin = 0, usedTodayMin = 0, groupName = "Social & Gaming"),
-                AppPolicy("duolingo", "Duolingo", AppCategory.EDUCATION, "🦉", dailyLimitMin = 60, usedTodayMin = 20)
-            ),
-            "child_ayla" to listOf(
-                AppPolicy("whatsapp", "WhatsApp (School)", AppCategory.COMMUNICATION, "💬", dailyLimitMin = 60, usedTodayMin = 15, groupName = "Chat Apps"),
-                AppPolicy("khan_academy", "Khan Academy", AppCategory.EDUCATION, "📚", dailyLimitMin = 120, usedTodayMin = 30),
-                AppPolicy("youtube", "YouTube Kids", AppCategory.ENTERTAINMENT, "▶️", dailyLimitMin = 60, usedTodayMin = 20),
-                AppPolicy("roblox", "Roblox", AppCategory.GAMING, "🕹️", dailyLimitMin = 30, usedTodayMin = 0)
-            )
-        )
-    )
+    // Policies — ab Firestore se LIVE load hoti hain (starter policies addChild par cloud mein save hoti hain)
+    private val _policies = MutableStateFlow<Map<String, List<AppPolicy>>>(emptyMap())
     val policies: StateFlow<Map<String, List<AppPolicy>>> = _policies.asStateFlow()
 
     // Blocked Domains
@@ -140,43 +125,7 @@ class TawazunRepository {
     val blockedDomains: StateFlow<List<String>> = _blockedDomains.asStateFlow()
 
     // Homework tasks
-    private val _homeworkTasks = MutableStateFlow<List<HomeworkTask>>(
-        listOf(
-            HomeworkTask(
-                taskId = "task_math_01",
-                childId = "child_zain",
-                title = "Quadratic Equations Exercise 2.3",
-                subject = "Mathematics",
-                dueTime = "Today, 6:00 PM",
-                isCompletedByStudent = true,
-                completedAt = System.currentTimeMillis() - 7200000,
-                isVerifiedByParent = true,
-                verifiedAt = System.currentTimeMillis() - 3600000,
-                notesSummary = "Worksheet sent on Class WhatsApp Group (Ex 2.3 Q1-Q10)"
-            ),
-            HomeworkTask(
-                taskId = "task_phys_02",
-                childId = "child_zain",
-                title = "Motion Numericals & Speed-Time Graph",
-                subject = "Physics",
-                dueTime = "Today, 7:30 PM",
-                isCompletedByStudent = true,
-                completedAt = System.currentTimeMillis() - 1800000,
-                isVerifiedByParent = false,
-                notesSummary = "Numericals 3.1 to 3.5 from Matric Physics Textbook"
-            ),
-            HomeworkTask(
-                taskId = "task_urdu_03",
-                childId = "child_zain",
-                title = "Allama Iqbal Poetry Memorization (Bang-e-Dra)",
-                subject = "Urdu Literature",
-                dueTime = "Today, 8:30 PM",
-                isCompletedByStudent = false,
-                isVerifiedByParent = false,
-                notesSummary = "Prepare 4 stanzas for morning assembly recitation"
-            )
-        )
-    )
+    private val _homeworkTasks = MutableStateFlow<List<HomeworkTask>>(emptyList())
     val homeworkTasks: StateFlow<List<HomeworkTask>> = _homeworkTasks.asStateFlow()
 
     // 3-Day Window Usage Events
@@ -441,8 +390,14 @@ class TawazunRepository {
         val prevSession = _currentSession.value
         familyListener?.remove()
         familyListener = null
+        homeworkListener?.remove()
+        homeworkListener = null
+        policiesListener?.remove()
+        policiesListener = null
         _children.value = emptyList()
         _selectedChildId.value = ""
+        _homeworkTasks.value = emptyList()
+        _policies.value = emptyMap()
         _currentSession.value = null
         // Firebase se bhi asli sign out
         auth.signOut()
@@ -481,6 +436,35 @@ class TawazunRepository {
                 if (list.isNotEmpty() && list.none { it.id == selected }) {
                     _selectedChildId.value = list.first().id
                 }
+            }
+        attachHomeworkListener(familyId)
+        attachPoliciesListener(familyId)
+    }
+
+    /** Homework tasks — LIVE (parent add kare to student ke phone par foran dikhta hai). */
+    private fun attachHomeworkListener(familyId: String) {
+        homeworkListener?.remove()
+        homeworkListener = db.collection("families").document(familyId).collection("homework")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val list = snapshot.documents.mapNotNull { it.toHomeworkTask() }
+                _homeworkTasks.value = list
+                // Data change par unlock status dobara calculate (e.g. naya task aa gaya)
+                list.map { it.childId }.distinct().forEach { recomputeUnlock(it) }
+            }
+    }
+
+    /** App limits (policies) — LIVE cloud sync. */
+    private fun attachPoliciesListener(familyId: String) {
+        policiesListener?.remove()
+        policiesListener = db.collection("families").document(familyId).collection("policies")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val pairs = snapshot.documents.mapNotNull { doc ->
+                    val policy = doc.toPolicy()
+                    if (policy != null) (doc.getString("childId") ?: "") to policy else null
+                }
+                _policies.value = pairs.groupBy({ it.first }, { it.second })
             }
     }
 
@@ -525,7 +509,11 @@ class TawazunRepository {
         )
         docRef.set(child.toMap())
             .addOnSuccessListener {
-                // Naye bachay ke liye starter policies
+                // Naye bachay ke liye starter policies — cloud mein bhi save
+                val policiesRef = db.collection("families").document(parentUid).collection("policies")
+                starterPolicies().forEach { p ->
+                    policiesRef.document("${child.id}_${p.appKey}").set(p.toPolicyMap(child.id))
+                }
                 _policies.value = _policies.value + (child.id to starterPolicies())
                 _selectedChildId.value = child.id
                 addAudit("CHILD_ADDED", _currentSession.value?.email ?: "Parent", "New child added: ${child.name} (${cleanEmail})")
@@ -561,6 +549,69 @@ class TawazunRepository {
         "isRevoked" to isRevoked,
         "studentAuthUid" to studentAuthUid
     )
+
+    /** HomeworkTask ko Firestore map mein badlo. */
+    private fun HomeworkTask.toHomeworkMap(): Map<String, Any?> = mapOf(
+        "childId" to childId,
+        "title" to title,
+        "subject" to subject,
+        "dueTime" to dueTime,
+        "isCompletedByStudent" to isCompletedByStudent,
+        "completedAt" to completedAt,
+        "isVerifiedByParent" to isVerifiedByParent,
+        "verifiedAt" to verifiedAt,
+        "notesSummary" to notesSummary,
+        "createdAt" to System.currentTimeMillis()
+    )
+
+    /** Firestore document se HomeworkTask banao. */
+    private fun DocumentSnapshot.toHomeworkTask(): HomeworkTask? = try {
+        HomeworkTask(
+            taskId = id,
+            childId = getString("childId") ?: "",
+            title = getString("title") ?: "",
+            subject = getString("subject") ?: "",
+            dueTime = getString("dueTime") ?: "",
+            isCompletedByStudent = getBoolean("isCompletedByStudent") ?: false,
+            completedAt = getLong("completedAt"),
+            isVerifiedByParent = getBoolean("isVerifiedByParent") ?: false,
+            verifiedAt = getLong("verifiedAt"),
+            notesSummary = getString("notesSummary") ?: ""
+        )
+    } catch (e: Exception) {
+        null
+    }
+
+    /** AppPolicy ko Firestore map mein badlo. */
+    private fun AppPolicy.toPolicyMap(childId: String): Map<String, Any?> = mapOf(
+        "childId" to childId,
+        "appKey" to appKey,
+        "appName" to appName,
+        "category" to category.name,
+        "iconEmoji" to iconEmoji,
+        "dailyLimitMin" to dailyLimitMin,
+        "usedTodayMin" to usedTodayMin,
+        "groupName" to groupName
+    )
+
+    /** Firestore document se AppPolicy banao. */
+    private fun DocumentSnapshot.toPolicy(): AppPolicy? = try {
+        AppPolicy(
+            appKey = getString("appKey") ?: "",
+            appName = getString("appName") ?: "",
+            category = try {
+                AppCategory.valueOf(getString("category") ?: "ENTERTAINMENT")
+            } catch (e: Exception) {
+                AppCategory.ENTERTAINMENT
+            },
+            iconEmoji = getString("iconEmoji") ?: "📱",
+            dailyLimitMin = (getLong("dailyLimitMin") ?: 0L).toInt(),
+            usedTodayMin = (getLong("usedTodayMin") ?: 0L).toInt(),
+            groupName = getString("groupName")
+        )
+    } catch (e: Exception) {
+        null
+    }
 
     /** Firestore document se Child wapas banao. */
     private fun DocumentSnapshot.toChild(): Child? = try {
@@ -602,40 +653,85 @@ class TawazunRepository {
         _selectedChildId.value = childId
     }
 
-    // --- HOMEWORK & BALANCE MODE ---
+    // --- HOMEWORK & BALANCE MODE (Firestore cloud sync) ---
+
+    /** Parent naya homework banaye — Firestore mein save, student ke phone par LIVE dikhta hai. */
+    fun addHomeworkTask(childId: String, title: String, subject: String, dueTime: String) {
+        if (title.isBlank()) {
+            _authError.value = "Homework ka title likhna zaroori hai."
+            return
+        }
+        val child = _children.value.find { it.id == childId } ?: return
+        val docRef = db.collection("families").document(child.familyId).collection("homework").document()
+        val task = HomeworkTask(
+            taskId = docRef.id,
+            childId = childId,
+            title = title.trim(),
+            subject = subject.trim().ifBlank { "General" },
+            dueTime = dueTime.trim().ifBlank { "Today" },
+            notesSummary = "Added by parent via Tawazun"
+        )
+        docRef.set(task.toHomeworkMap())
+        _homeworkTasks.value = _homeworkTasks.value + task
+        recomputeUnlock(childId)
+        addAudit("HOMEWORK_ADDED", _currentSession.value?.email ?: "Parent", "Homework added: '${task.title}' for ${child.name}")
+    }
 
     fun markHomeworkCompletedByStudent(taskId: String, completed: Boolean) {
+        var updatedTask: HomeworkTask? = null
         _homeworkTasks.value = _homeworkTasks.value.map { task ->
             if (task.taskId == taskId) {
-                task.copy(
+                val t = task.copy(
                     isCompletedByStudent = completed,
                     completedAt = if (completed) System.currentTimeMillis() else null,
                     // If student un-completes, also reset parent verification
                     isVerifiedByParent = if (!completed) false else task.isVerifiedByParent
                 )
+                updatedTask = t
+                t
             } else task
         }
-        val task = _homeworkTasks.value.find { it.taskId == taskId }
-        if (task != null) {
-            recomputeUnlock(task.childId)
-            addAudit("HOMEWORK_STATUS_CHANGED", _currentSession.value?.email ?: "Student", "Marked '${task.title}' completed = $completed")
+        val task = updatedTask ?: return
+        val familyId = _children.value.find { it.id == task.childId }?.familyId
+        if (familyId != null) {
+            db.collection("families").document(familyId).collection("homework").document(taskId)
+                .update(
+                    mapOf(
+                        "isCompletedByStudent" to completed,
+                        "completedAt" to task.completedAt,
+                        "isVerifiedByParent" to task.isVerifiedByParent
+                    )
+                )
         }
+        recomputeUnlock(task.childId)
+        addAudit("HOMEWORK_STATUS_CHANGED", _currentSession.value?.email ?: "Student", "Marked '${task.title}' completed = $completed")
     }
 
     fun verifyHomeworkByParent(taskId: String, verified: Boolean) {
+        var updatedTask: HomeworkTask? = null
         _homeworkTasks.value = _homeworkTasks.value.map { task ->
             if (task.taskId == taskId) {
-                task.copy(
+                val t = task.copy(
                     isVerifiedByParent = verified,
                     verifiedAt = if (verified) System.currentTimeMillis() else null
                 )
+                updatedTask = t
+                t
             } else task
         }
-        val task = _homeworkTasks.value.find { it.taskId == taskId }
-        if (task != null) {
-            recomputeUnlock(task.childId)
-            addAudit("HOMEWORK_VERIFIED", _currentSession.value?.email ?: "Parent", "Parent verification for '${task.title}' set to $verified")
+        val task = updatedTask ?: return
+        val familyId = _children.value.find { it.id == task.childId }?.familyId
+        if (familyId != null) {
+            db.collection("families").document(familyId).collection("homework").document(taskId)
+                .update(
+                    mapOf(
+                        "isVerifiedByParent" to verified,
+                        "verifiedAt" to task.verifiedAt
+                    )
+                )
         }
+        recomputeUnlock(task.childId)
+        addAudit("HOMEWORK_VERIFIED", _currentSession.value?.email ?: "Parent", "Parent verification for '${task.title}' set to $verified")
     }
 
     private fun recomputeUnlock(childId: String) {
@@ -648,6 +744,13 @@ class TawazunRepository {
             } else child
         }
 
+        // Unlock status cloud mein bhi update karo (dono phones par sync)
+        val child = _children.value.find { it.id == childId }
+        if (child != null) {
+            db.collection("families").document(child.familyId).collection("children").document(childId)
+                .update("homeworkUnlocked", allDoneAndVerified)
+        }
+
         addAudit(
             "RECOMPUTE_UNLOCK",
             "Server/CloudFunction",
@@ -658,13 +761,36 @@ class TawazunRepository {
     // --- APP POLICIES & LIMITS ---
 
     fun updatePolicy(childId: String, appKey: String, limitMin: Int) {
-        val currentChildPolicies = _policies.value[childId] ?: return
-        val updated = currentChildPolicies.map {
-            if (it.appKey == appKey) it.copy(dailyLimitMin = limitMin) else it
+        val familyId = _children.value.find { it.id == childId }?.familyId ?: return
+        val currentChildPolicies = _policies.value[childId]
+        if (currentChildPolicies != null) {
+            val updated = currentChildPolicies.map {
+                if (it.appKey == appKey) it.copy(dailyLimitMin = limitMin) else it
+            }
+            _policies.value = _policies.value.toMutableMap().apply {
+                put(childId, updated)
+            }
         }
-        _policies.value = _policies.value.toMutableMap().apply {
-            put(childId, updated)
-        }
+        // Limit cloud mein save — bachay ke phone par bhi yehi limit chalegi
+        val policyRef = db.collection("families").document(familyId).collection("policies")
+            .document("${childId}_${appKey}")
+        policyRef.update("dailyLimitMin", limitMin)
+            .addOnFailureListener {
+                // Doc abhi nahi bana to bana do
+                policyRef.set(
+                    mapOf(
+                        "childId" to childId,
+                        "appKey" to appKey,
+                        "appName" to appKey,
+                        "category" to "ENTERTAINMENT",
+                        "iconEmoji" to "📱",
+                        "dailyLimitMin" to limitMin,
+                        "usedTodayMin" to 0,
+                        "groupName" to null
+                    ),
+                    SetOptions.merge()
+                )
+            }
         addAudit("POLICY_UPDATE", _currentSession.value?.email ?: "Parent", "Set daily limit for $appKey to $limitMin min for child $childId")
     }
 
