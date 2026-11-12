@@ -37,7 +37,8 @@ data class Child(
     val bedtimeActiveDays: List<Int> = listOf(1, 2, 3, 4, 5, 6, 7), // Sun to Sat
     val mirroringActive: Boolean = false,
     val pairingCode: String = "TWZ-7492",
-    val isRevoked: Boolean = false
+    val isRevoked: Boolean = false,
+    val studentAuthUid: String? = null
 )
 
 data class AppPolicy(
