@@ -43,6 +43,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -69,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -94,6 +97,7 @@ import com.example.ui.theme.TawazunSurfaceVariant
 import com.example.ui.theme.TawazunTextPrimary
 import com.example.ui.theme.TawazunTextSecondary
 import com.example.ui.theme.TawazunWarningAmber
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -116,6 +120,86 @@ fun ParentDashboardScreen(
     val mirrorSessions by repository.mirrorSessions.collectAsState()
     val auditLogs by repository.auditLogs.collectAsState()
     val subscription by repository.subscription.collectAsState()
+    val childrenLoading by repository.childrenLoading.collectAsState()
+
+    var showAddChildDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // Family mein abhi koi bacha nahi — "pehla bacha add karein" ka screen
+    if (children.isEmpty()) {
+        if (childrenLoading) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = TawazunEmeraldPrimary)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Family data load ho rahi hai...", color = TawazunTextSecondary, fontSize = 13.sp)
+                }
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("👨‍👩‍👧", fontSize = 44.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Apni family shuru karein",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TawazunTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "Pehla bacha add karein — uska naam, class aur email. Phir wo apne phone par isi email se account bana sakta hai.",
+                            fontSize = 13.sp,
+                            color = TawazunTextSecondary,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 19.sp
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { showAddChildDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Text("➕ Pehla Bacha Add Karein", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onLogout) {
+                            Text("Log Out", fontSize = 13.sp, color = TawazunTextSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        if (showAddChildDialog) {
+            AddChildDialog(
+                onDismiss = { showAddChildDialog = false },
+                onConfirm = { name, grade, email, device, emoji ->
+                    scope.launch { repository.addChild(name, grade, email, device, emoji) }
+                    showAddChildDialog = false
+                }
+            )
+        }
+        return
+    }
 
     val currentChild = children.find { it.id == selectedChildId } ?: children.first()
     val currentChildPolicies = policiesMap[selectedChildId] ?: emptyList()
@@ -164,6 +248,13 @@ fun ParentDashboardScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showAddChildDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Child",
+                            tint = TawazunEmeraldPrimary
+                        )
+                    }
                     IconButton(
                         onClick = onLogout,
                         modifier = Modifier.testTag("parent_logout_button")
@@ -367,6 +458,16 @@ fun ParentDashboardScreen(
                 )
             }
         }
+    }
+
+    if (showAddChildDialog) {
+        AddChildDialog(
+            onDismiss = { showAddChildDialog = false },
+            onConfirm = { name, grade, email, device, emoji ->
+                scope.launch { repository.addChild(name, grade, email, device, emoji) }
+                showAddChildDialog = false
+            }
+        )
     }
 
     if (showDeleteConfirmDialog) {
@@ -1266,4 +1367,84 @@ fun AuditTab(
             }
         }
     }
+}
+
+@Composable
+fun AddChildDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var grade by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var device by remember { mutableStateOf("") }
+    var emoji by remember { mutableStateOf("👦") }
+    val emojiChoices = listOf("👦", "👧", "🧒", "🧑")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Naya Bacha Add Karein", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Bachay ka naam") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = grade,
+                    onValueChange = { grade = it },
+                    label = { Text("Class (e.g. Grade 9)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Bachay ka email (login ke liye)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = device,
+                    onValueChange = { device = it },
+                    label = { Text("Phone model (optional)") },
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    emojiChoices.forEach { choice ->
+                        FilterChip(
+                            selected = emoji == choice,
+                            onClick = { emoji = choice },
+                            label = { Text(choice, fontSize = 20.sp) }
+                        )
+                    }
+                }
+                Text(
+                    "Bacha isi email se apne phone par account banayega.",
+                    fontSize = 11.sp,
+                    color = TawazunTextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(
+                        name.trim(),
+                        grade.trim(),
+                        email.trim(),
+                        device.trim().ifBlank { "Not paired yet" },
+                        emoji
+                    )
+                },
+                enabled = name.isNotBlank() && email.contains("@"),
+                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
+            ) {
+                Text("Add Karein")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
