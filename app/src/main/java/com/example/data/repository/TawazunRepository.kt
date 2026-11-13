@@ -14,7 +14,6 @@ import com.example.data.model.WebAttempt
 import android.content.Context
 import com.example.data.usage.UsageTracker
 import com.example.domain.DomainFilter
-import com.example.service.GuardState
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
@@ -41,7 +40,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-class TawazunRepository(private val appContext: Context? = null) {
+class TawazunRepository {
 
     // REAL Firebase Authentication engine
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -437,43 +436,10 @@ class TawazunRepository(private val appContext: Context? = null) {
                 if (list.isNotEmpty() && list.none { it.id == selected }) {
                     _selectedChildId.value = list.first().id
                 }
-                // 🛡️ Guard update (homeworkUnlocked / bedtime badal sakte hain)
-                refreshGuardState()
             }
         attachHomeworkListener(familyId)
         attachPoliciesListener(familyId)
         attachUsageListener(familyId)
-    }
-
-    /**
-     * 🛡️ GUARD STATE — kya kya block karna hai ye compute kar ke GuardService ko do.
-     * Rule: (1) limit khatam = block, (2) homework unverified = entertainment/games block,
-     * (3) bedtime = entertainment/games block.
-     * Sirf STUDENT device par chalta hai (parent ka phone kabhi block nahi hota).
-     */
-    fun refreshGuardState() {
-        val session = _currentSession.value ?: return
-        if (session.role != UserRole.STUDENT) return
-        val childId = session.childId ?: return
-        val child = _children.value.find { it.id == childId } ?: return
-        val childPolicies = _policies.value[childId] ?: emptyList()
-
-        val blockedKeys = mutableSetOf<String>()
-        childPolicies.forEach { p ->
-            val isFun = p.category == AppCategory.ENTERTAINMENT || p.category == AppCategory.GAMING
-            val lockedByHomework = isFun && !child.homeworkUnlocked
-            val lockedByTimer = p.isBlockedByTimer
-            val bedtimeNow = isFun && isBedtimeActive(child)
-            if (lockedByHomework || lockedByTimer || bedtimeNow) {
-                blockedKeys.add(p.appKey)
-            }
-        }
-
-        val blockedPackages = mutableSetOf<String>()
-        blockedKeys.forEach { key ->
-            UsageTracker.packagesFor(key)?.let { blockedPackages.addAll(it) }
-        }
-        GuardState.update(appContext, blockedPackages)
     }
 
     /** Usage events — LIVE (student phone par jo chale, parent ko dikhta hai). */
@@ -547,9 +513,6 @@ class TawazunRepository(private val appContext: Context? = null) {
             )
         }
         addAudit("USAGE_SYNC", session.email, "Real usage synced for $dateStr (${usage.size} apps).")
-
-        // 🛡️ Naya usage aaya — guard update (limit khatam hui ho to block lage)
-        refreshGuardState()
     }
 
     /** Homework tasks — LIVE (parent add kare to student ke phone par foran dikhta hai). */
@@ -562,8 +525,6 @@ class TawazunRepository(private val appContext: Context? = null) {
                 _homeworkTasks.value = list
                 // Data change par unlock status dobara calculate (e.g. naya task aa gaya)
                 list.map { it.childId }.distinct().forEach { recomputeUnlock(it) }
-                // 🛡️ Guard update (verify hone par unlock hota hai)
-                refreshGuardState()
             }
     }
 
@@ -578,8 +539,6 @@ class TawazunRepository(private val appContext: Context? = null) {
                     if (policy != null) (doc.getString("childId") ?: "") to policy else null
                 }
                 _policies.value = pairs.groupBy({ it.first }, { it.second })
-                // 🛡️ Guard update (limits badal sakti hain)
-                refreshGuardState()
             }
     }
 
