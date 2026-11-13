@@ -454,6 +454,7 @@ fun ParentDashboardScreen(
                     child = currentChild,
                     sessions = mirrorSessions.filter { it.childId == selectedChildId },
                     onToggleMirror = { active -> repository.toggleMirroring(currentChild.id, active) },
+                    onSetMode = { mode, gallery -> repository.setMirrorMode(currentChild.id, mode, gallery) },
                     liveSnap = screenSnaps[currentChild.id]
                 )
                 4 -> ChildrenTab(
@@ -1077,6 +1078,7 @@ fun MirrorTab(
     child: Child,
     sessions: List<com.example.data.model.MirrorSession>,
     onToggleMirror: (Boolean) -> Unit,
+    onSetMode: (String, Boolean) -> Unit,
     liveSnap: Pair<String, Long>? = null
 ) {
     val activeSession = sessions.firstOrNull()
@@ -1087,9 +1089,10 @@ fun MirrorTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 🔴 ASLI LIVE SCREEN SNAP (bachay ke phone se, Firestore se)
-        item {
-            Card(
+        // 🔴 ASLI LIVE SCREEN SNAP (bachay ke phone se, Firestore se) — sirf SNAP mode mein
+        if (child.mirrorMode != "video") {
+            item {
+                Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -1157,6 +1160,34 @@ fun MirrorTab(
                         fontSize = 10.sp,
                         color = TawazunTextSecondary
                     )
+                    }
+                }
+            }
+        } else {
+            // 🎞️ VIDEO MODE — video bachay ke phone par save hoti hai
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            "🎞️ Video Recording Mode ON hai",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = TawazunEmeraldPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            "Bachay ki poori screen ki PROPER VIDEO record hoti hai — koi second nahi chhootega.\n" +
+                                "Save jagah: " + (if (child.videoToGallery) "Gallery → Movies → Tawazun" else "App ka private folder") +
+                                "\nVideo bachay ke phone par rehti hai — bachay ki app mein '📁 My Recordings' se dekhein.",
+                            fontSize = 12.sp,
+                            color = TawazunTextSecondary,
+                            lineHeight = 17.sp
+                        )
+                    }
                 }
             }
         }
@@ -1194,6 +1225,87 @@ fun MirrorTab(
                                 checkedThumbColor = Color.White,
                                 checkedTrackColor = TawazunEmeraldPrimary
                             )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 🎛️ RECORDING MODE — parent khud choose kare (consent + choice)
+                    Text(
+                        "Recording Mode — khud choose karein:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TawazunTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row {
+                        OutlinedButton(
+                            onClick = { onSetMode("snap", child.videoToGallery) },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (child.mirrorMode != "video") TawazunEmeraldPrimary else Color.Transparent,
+                                contentColor = if (child.mirrorMode != "video") Color.White else TawazunTextPrimary
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                        ) {
+                            Text("📸 Snap", fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { onSetMode("video", child.videoToGallery) },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (child.mirrorMode == "video") TawazunEmeraldPrimary else Color.Transparent,
+                                contentColor = if (child.mirrorMode == "video") Color.White else TawazunTextPrimary
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                        ) {
+                            Text("🎞️ Video", fontSize = 12.sp)
+                        }
+                    }
+                    if (child.mirrorMode == "video") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    "Gallery mein save karein",
+                                    fontSize = 12.sp,
+                                    color = TawazunTextPrimary
+                                )
+                                Text(
+                                    "Off = app ka private folder (zyada hidden)",
+                                    fontSize = 10.sp,
+                                    color = TawazunTextSecondary
+                                )
+                            }
+                            Switch(
+                                checked = child.videoToGallery,
+                                onCheckedChange = { onSetMode("video", it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = TawazunEmeraldPrimary
+                                )
+                            )
+                        }
+                        Text(
+                            "Poori screen ki proper video record hogi — koi second nahi chhootega. Video bachay ke phone par save hoti hai (cloud par nahi — FREE plan).",
+                            fontSize = 10.sp,
+                            color = TawazunTextSecondary,
+                            lineHeight = 14.sp
+                        )
+                    } else {
+                        Text(
+                            "Snap mode: har 30 second ek photo — parent ko LIVE milti hai.",
+                            fontSize = 10.sp,
+                            color = TawazunTextSecondary
                         )
                     }
 
