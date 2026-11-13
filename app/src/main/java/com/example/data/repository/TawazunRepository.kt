@@ -56,6 +56,8 @@ class TawazunRepository(private val appContext: Context? = null) {
     private var policiesListener: ListenerRegistration? = null
     private var usageListener: ListenerRegistration? = null
     private var screenSnapListener: ListenerRegistration? = null
+    private var webConfigListener: ListenerRegistration? = null
+    private var webAttemptsListener: ListenerRegistration? = null
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -144,16 +146,13 @@ class TawazunRepository(private val appContext: Context? = null) {
     private val _screenSnaps = MutableStateFlow<Map<String, Pair<String, Long>>>(emptyMap())
     val screenSnaps: StateFlow<Map<String, Pair<String, Long>>> = _screenSnaps.asStateFlow()
 
-    // Web Attempts
-    private val _webAttempts = MutableStateFlow<List<WebAttempt>>(
-        listOf(
-            WebAttempt("wa_1", "child_zain", "https://m.youtube.com/shorts", "m.youtube.com", System.currentTimeMillis() - 40 * 60 * 1000, blocked = true, matchedRule = "*.youtube.com"),
-            WebAttempt("wa_2", "child_zain", "https://ilmkidunya.com/past-papers", "ilmkidunya.com", System.currentTimeMillis() - 90 * 60 * 1000, blocked = false),
-            WebAttempt("wa_3", "child_zain", "https://vt.tiktok.com/clip", "vt.tiktok.com", System.currentTimeMillis() - 150 * 60 * 1000, blocked = true, matchedRule = "*.tiktok.com"),
-            WebAttempt("wa_4", "child_zain", "https://sindhstudy.pk/notes", "sindhstudy.pk", System.currentTimeMillis() - 210 * 60 * 1000, blocked = false)
-        )
-    )
+    // Web Attempts — ASLI data (Firestore se LIVE)
+    private val _webAttempts = MutableStateFlow<List<WebAttempt>>(emptyList())
     val webAttempts: StateFlow<List<WebAttempt>> = _webAttempts.asStateFlow()
+
+    // 🌐 Allowed Websites — parent ne ijazat di hui list (Firestore se LIVE)
+    private val _allowedWebsites = MutableStateFlow<List<String>>(emptyList())
+    val allowedWebsites: StateFlow<List<String>> = _allowedWebsites.asStateFlow()
 
     // Mirror Sessions
     private val _mirrorSessions = MutableStateFlow<List<MirrorSession>>(
@@ -407,6 +406,10 @@ class TawazunRepository(private val appContext: Context? = null) {
         usageListener = null
         screenSnapListener?.remove()
         screenSnapListener = null
+        webConfigListener?.remove()
+        webConfigListener = null
+        webAttemptsListener?.remove()
+        webAttemptsListener = null
         _children.value = emptyList()
         _selectedChildId.value = ""
         _homeworkTasks.value = emptyList()
@@ -459,6 +462,46 @@ class TawazunRepository(private val appContext: Context? = null) {
         attachPoliciesListener(familyId)
         attachUsageListener(familyId)
         attachScreenSnapListener(familyId)
+        attachWebConfigListener(familyId)
+        attachWebAttemptsListener(familyId)
+    }
+
+    /** 🌐 Parent ki allowed-websites list — LIVE (webConfig/allowed doc). */
+    private fun attachWebConfigListener(familyId: String) {
+        webConfigListener?.remove()
+        webConfigListener = db.collection("families").document(familyId)
+            .collection("webConfig").document("allowed")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _allowedWebsites.value = (snapshot.get("websites") as? List<*>)
+                    ?.mapNotNull { it as? String }
+                    ?: emptyList()
+            }
+    }
+
+    /** 🌐 Web attempts — LIVE (bachay ke browser se asli logs). */
+    private fun attachWebAttemptsListener(familyId: String) {
+        webAttemptsListener?.remove()
+        webAttemptsListener = db.collection("families").document(familyId).collection("webAttempts")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val list = snapshot.documents.mapNotNull { doc ->
+                    try {
+                        WebAttempt(
+                            id = doc.id,
+                            childId = doc.getString("childId") ?: return@mapNotNull null,
+                            url = doc.getString("url") ?: "",
+                            domain = doc.getString("domain") ?: "",
+                            attemptedAt = doc.getLong("attemptedAt") ?: 0L,
+                            blocked = doc.getBoolean("blocked") ?: false,
+                            matchedRule = doc.getString("matchedRule")
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }.sortedByDescending { it.attemptedAt }
+                _webAttempts.value = list
+            }
     }
 
     /** 🪞 Screen Snaps — LIVE (bachay ke phone ki taaza tasveer). */
@@ -989,6 +1032,67 @@ class TawazunRepository(private val appContext: Context? = null) {
     }
 
     // --- WEB FILTERING ---
+
+    /** 🌐 Parent nayi website allow kare (ijazat wali list mein add). */
+    fun addAllowedWebsite(rawUrl: String) {
+        val familyId = _currentSession.value?.familyId ?: return
+        var s = rawUrl.trim().lowercase(Locale.ROOT)
+        if (s.isEmpty()) return
+        if (!s.startsWith("http://") && !s.startsWith("https://")) s = "https://$s"
+        val updated = (_allowedWebsites.value + s).distinct()
+        _allowedWebsites.value = updated
+        db.collection("families").document(familyId)
+            .collection("webConfig").document("allowed")
+            .set(mapOf("websites" to updated))
+            .addOnFailureListener { }
+        addAudit("WEB_ALLOW_ADD", _currentSession.value?.email ?: "Parent", "Allowed website added: $s")
+    }
+
+    /** 🌐 Website ki ijazat wapas le lein. */
+    fun removeAllowedWebsite(url: String) {
+        val familyId = _currentSession.value?.familyId ?: return
+        val updated = _allowedWebsites.value.filter { it != url }
+        _allowedWebsites.value = updated
+        db.collection("families").document(familyId)
+            .collection("webConfig").document("allowed")
+            .set(mapOf("websites" to updated))
+            .addOnFailureListener { }
+        addAudit("WEB_ALLOW_REMOVE", _currentSession.value?.email ?: "Parent", "Allowed website removed: $url")
+    }
+
+    /**
+     * 🌐 Student browser se ASLI navigation ka record — Firestore mein likhta hai
+     * taake parent ke dashboard par LIVE nazar aaye (blocked ya allowed).
+     */
+    fun logWebVisit(childId: String, rawUrl: String, blocked: Boolean) {
+        val familyId = _currentSession.value?.familyId ?: return
+        val attempt = WebAttempt(
+            id = "wa_${System.currentTimeMillis()}",
+            childId = childId,
+            url = rawUrl,
+            domain = DomainFilter.normalizeHost(rawUrl),
+            attemptedAt = System.currentTimeMillis(),
+            blocked = blocked,
+            matchedRule = if (blocked) "not-in-allowed-list" else null
+        )
+        _webAttempts.value = listOf(attempt) + _webAttempts.value
+        db.collection("families").document(familyId).collection("webAttempts")
+            .document(attempt.id)
+            .set(
+                mapOf(
+                    "childId" to childId,
+                    "url" to attempt.url,
+                    "domain" to attempt.domain,
+                    "attemptedAt" to attempt.attemptedAt,
+                    "blocked" to blocked,
+                    "matchedRule" to attempt.matchedRule
+                )
+            )
+            .addOnFailureListener { }
+        if (blocked) {
+            addAudit("WEB_BLOCK", "SafeWeb", "Blocked navigation to '$rawUrl' (not in allowed list) for child $childId")
+        }
+    }
 
     fun testDomainAttempt(childId: String, rawUrl: String): Pair<Boolean, String?> {
         val check = DomainFilter.isBlocked(rawUrl, _blockedDomains.value)
