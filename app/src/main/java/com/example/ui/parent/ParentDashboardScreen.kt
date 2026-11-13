@@ -122,6 +122,7 @@ fun ParentDashboardScreen(
     val blockedDomains by repository.blockedDomains.collectAsState()
     val usageEvents by repository.usageEvents.collectAsState()
     val webAttempts by repository.webAttempts.collectAsState()
+    val allowedWebsites by repository.allowedWebsites.collectAsState()
     val mirrorSessions by repository.mirrorSessions.collectAsState()
     val screenSnaps by repository.screenSnaps.collectAsState()
     val auditLogs by repository.auditLogs.collectAsState()
@@ -446,9 +447,12 @@ fun ParentDashboardScreen(
                     child = currentChild,
                     policies = currentChildPolicies,
                     blockedDomains = blockedDomains,
+                    allowedWebsites = allowedWebsites,
                     onUpdateLimit = { appKey, limit -> repository.updatePolicy(currentChild.id, appKey, limit) },
                     onAddDomain = { repository.addBlockedDomain(it) },
-                    onRemoveDomain = { repository.removeBlockedDomain(it) }
+                    onRemoveDomain = { repository.removeBlockedDomain(it) },
+                    onAddAllowed = { repository.addAllowedWebsite(it) },
+                    onRemoveAllowed = { repository.removeAllowedWebsite(it) }
                 )
                 3 -> MirrorTab(
                     child = currentChild,
@@ -916,11 +920,15 @@ fun RulesTab(
     child: Child,
     policies: List<AppPolicy>,
     blockedDomains: List<String>,
+    allowedWebsites: List<String>,
     onUpdateLimit: (String, Int) -> Unit,
     onAddDomain: (String) -> Unit,
-    onRemoveDomain: (String) -> Unit
+    onRemoveDomain: (String) -> Unit,
+    onAddAllowed: (String) -> Unit,
+    onRemoveAllowed: (String) -> Unit
 ) {
     var newDomainText by remember { mutableStateOf("") }
+    var newSiteText by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier
@@ -1001,6 +1009,103 @@ fun RulesTab(
                         Text("1 Hour", fontSize = 10.sp, color = TawazunTextSecondary)
                         Text("2 Hours", fontSize = 10.sp, color = TawazunTextSecondary)
                         Text("4 Hours", fontSize = 10.sp, color = TawazunTextSecondary)
+                    }
+                }
+            }
+        }
+
+        // 🌐 ALLOWED WEBSITES — bacha SIRF inhi par ja sakta hai (app ke andar)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        "Allowed Websites",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = TawazunTextPrimary
+                    )
+                    Text(
+                        "Bacha inhi websites ko Tawazun ke Safe Web tab mein khol sakta hai — baqi sab block ho jati hai.",
+                        fontSize = 11.sp,
+                        color = TawazunTextSecondary,
+                        lineHeight = 15.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = newSiteText,
+                            onValueChange = { newSiteText = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            placeholder = { Text("khanacademy.org", fontSize = 12.sp) }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (newSiteText.isNotBlank()) {
+                                    onAddAllowed(newSiteText)
+                                    newSiteText = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(52.dp)
+                        ) {
+                            Text("Add", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    if (allowedWebsites.isEmpty()) {
+                        Text(
+                            "Abhi koi website allow nahi — upar likh kar Add karein (jaise khanacademy.org ya ilmkidunya.com).",
+                            fontSize = 11.sp,
+                            color = TawazunTextSecondary
+                        )
+                    }
+                    allowedWebsites.forEach { site ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    site
+                                        .removePrefix("https://")
+                                        .removePrefix("http://")
+                                        .removePrefix("www.")
+                                        .substringBefore('/'),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = TawazunTextPrimary
+                                )
+                                Text(
+                                    site,
+                                    fontSize = 10.sp,
+                                    color = TawazunTextSecondary,
+                                    maxLines = 1
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = { onRemoveAllowed(site) },
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("🗑 Remove", fontSize = 10.sp, color = TawazunErrorRed)
+                            }
+                        }
                     }
                 }
             }
