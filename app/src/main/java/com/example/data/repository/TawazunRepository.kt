@@ -703,6 +703,8 @@ class TawazunRepository(private val appContext: Context? = null) {
         "bedtimeEnd" to bedtimeEnd,
         "bedtimeActiveDays" to bedtimeActiveDays,
         "mirroringActive" to mirroringActive,
+        "mirrorMode" to mirrorMode,
+        "videoToGallery" to videoToGallery,
         "pairingCode" to pairingCode,
         "isRevoked" to isRevoked,
         "studentAuthUid" to studentAuthUid
@@ -787,6 +789,8 @@ class TawazunRepository(private val appContext: Context? = null) {
             bedtimeActiveDays = (get("bedtimeActiveDays") as? List<*>)?.mapNotNull { (it as? Long)?.toInt() }
                 ?: listOf(1, 2, 3, 4, 5, 6, 7),
             mirroringActive = getBoolean("mirroringActive") ?: false,
+            mirrorMode = getString("mirrorMode") ?: "snap",
+            videoToGallery = getBoolean("videoToGallery") ?: true,
             pairingCode = getString("pairingCode") ?: "TWZ-0000",
             isRevoked = getBoolean("isRevoked") ?: false,
             studentAuthUid = getString("studentAuthUid")
@@ -1020,10 +1024,41 @@ class TawazunRepository(private val appContext: Context? = null) {
     // --- SCREEN MIRRORING & PURGING ---
 
     fun toggleMirroring(childId: String, active: Boolean) {
+        val child = _children.value.find { it.id == childId } ?: return
         _children.value = _children.value.map {
             if (it.id == childId) it.copy(mirroringActive = active) else it
         }
+        // 🔥 FIX: Firestore mein bhi likho — warna student phone ko pata nahi chalta!
+        db.collection("families").document(child.familyId)
+            .collection("children").document(childId)
+            .update("mirroringActive", active)
+            .addOnFailureListener { }
         addAudit("MIRROR_TOGGLE", _currentSession.value?.email ?: "Parent", "Screen mirroring $childId set to $active")
+    }
+
+    /**
+     * 🎞️ Parent khud choose kare: "snap" (live photos) ya "video" (poori recording).
+     * videoToGallery = true → video Gallery (Movies/Tawazun) mein save hogi.
+     */
+    fun setMirrorMode(childId: String, mode: String, videoToGallery: Boolean) {
+        val child = _children.value.find { it.id == childId } ?: return
+        _children.value = _children.value.map {
+            if (it.id == childId) it.copy(mirrorMode = mode, videoToGallery = videoToGallery) else it
+        }
+        db.collection("families").document(child.familyId)
+            .collection("children").document(childId)
+            .update(
+                mapOf(
+                    "mirrorMode" to mode,
+                    "videoToGallery" to videoToGallery
+                )
+            )
+            .addOnFailureListener { }
+        addAudit(
+            "MIRROR_MODE",
+            _currentSession.value?.email ?: "Parent",
+            "Mirror mode for $childId set to $mode (gallery=$videoToGallery)"
+        )
     }
 
     /**
