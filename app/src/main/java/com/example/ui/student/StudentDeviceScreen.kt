@@ -5,8 +5,12 @@ import android.provider.Settings
 import android.app.Activity
 import android.content.Context
 import android.media.projection.MediaProjectionManager
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -89,6 +93,8 @@ import com.example.data.model.HomeworkTask
 import com.example.data.repository.TawazunRepository
 import com.example.data.usage.UsageTracker
 import com.example.service.GuardState
+import com.example.service.RecItem
+import com.example.service.ScreenRecordService
 import com.example.service.ScreenSnapService
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
@@ -138,23 +144,38 @@ fun StudentDeviceScreen(
     // --- 🛡️ APP GUARD (AccessibilityService — asli blocking) ---
     var guardEnabled by remember { mutableStateOf(GuardState.isGuardEnabled(context)) }
 
-    // --- 🪞 SCREEN SNAP (MediaProjection — live mirror) ---
+    // --- 🪞 SCREEN SNAP + 🎞️ VIDEO RECORD (MediaProjection — live mirror) ---
     var snapRunning by remember { mutableStateOf(ScreenSnapService.isRunning) }
+    var videoRunning by remember { mutableStateOf(ScreenRecordService.isRunning) }
+    var pendingVideo by remember { mutableStateOf(false) } // konsa mode start hoga
+    var recTick by remember { mutableStateOf(0) } // recordings list refresh
+    var playingRec by remember { mutableStateOf<RecItem?>(null) }
     val projectionManager = remember {
         context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
     }
-    val snapLauncher = rememberLauncherForActivityResult(
+    val captureLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val serviceIntent = Intent(context, ScreenSnapService::class.java).apply {
-                putExtra(ScreenSnapService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(ScreenSnapService.EXTRA_RESULT_DATA, result.data)
-                putExtra(ScreenSnapService.EXTRA_FAMILY_ID, session?.familyId ?: "")
-                putExtra(ScreenSnapService.EXTRA_CHILD_ID, currentChild.id)
+            if (pendingVideo) {
+                val serviceIntent = Intent(context, ScreenRecordService::class.java).apply {
+                    putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data)
+                    putExtra(ScreenRecordService.EXTRA_CHILD_ID, currentChild.id)
+                    putExtra(ScreenRecordService.EXTRA_TO_GALLERY, currentChild.videoToGallery)
+                }
+                context.startForegroundService(serviceIntent)
+                videoRunning = true
+            } else {
+                val serviceIntent = Intent(context, ScreenSnapService::class.java).apply {
+                    putExtra(ScreenSnapService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(ScreenSnapService.EXTRA_RESULT_DATA, result.data)
+                    putExtra(ScreenSnapService.EXTRA_FAMILY_ID, session?.familyId ?: "")
+                    putExtra(ScreenSnapService.EXTRA_CHILD_ID, currentChild.id)
+                }
+                context.startForegroundService(serviceIntent)
+                snapRunning = true
             }
-            context.startForegroundService(serviceIntent)
-            snapRunning = true
         }
     }
 
@@ -398,8 +419,172 @@ fun StudentDeviceScreen(
                 }
             }
 
-            // 🪞 Screen Snap card — mirror ON hone par dikhta hai
-            if (currentChild.mirroringActive) {
+            // 🪞🪞 Mirror card — mode ke hisaab se (parent ne khud choose kiya hai)
+            if (currentChild.mirroringActive && currentChild.mirrorMode == "video") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            if (videoRunning) "🎞️ Video Recording chal rahi hai" else "🎞️ Parent ne Video Recording mode ON kiya hai",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = TawazunTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            if (videoRunning)
+                                "Poori screen ki video record ho rahi hai — save: " +
+                                    (if (currentChild.videoToGallery) "Gallery → Movies → Tawazun" else "app ka private folder") +
+                                    ". Notification band hone tak chalti rahegi."
+                            else
+                                "Allow karein taake screen ki poori video record ho (parent baad mein dekh sakta hai).",
+                            fontSize = 11.sp,
+                            color = TawazunTextSecondary,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row {
+                            if (!videoRunning) {
+                                Button(
+                                    onClick = {
+                                        pendingVideo = true
+                                        captureLauncher.launch(projectionManager.createScreenCaptureIntent())
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(38.dp)
+                                ) {
+                                    Text("🎞️ Start Recording", fontSize = 12.sp)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = {
+                                        context.stopService(Intent(context, ScreenRecordService::class.java))
+                                        videoRunning = false
+                                        recTick++
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(38.dp)
+                                ) {
+                                    Text("Stop Karein", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 📁 My Recordings — ab tak ki saved videos
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "📁 My Recordings",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = TawazunTextPrimary
+                            )
+                            OutlinedButton(
+                                onClick = { recTick++ },
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("↻ Refresh", fontSize = 11.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val recordings = remember(recTick) {
+                            ScreenRecordService.listRecordings(context)
+                        }
+                        if (recordings.isEmpty()) {
+                            Text(
+                                "Abhi koi video nahi — Start Recording ke baad yahan dikhegi.",
+                                fontSize = 11.sp,
+                                color = TawazunTextSecondary
+                            )
+                        }
+                        recordings.take(5).forEach { rec ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        rec.label,
+                                        fontSize = 11.sp,
+                                        color = TawazunTextPrimary,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        "${rec.location} • ${rec.sizeMb} • ${rec.dateLabel}",
+                                        fontSize = 10.sp,
+                                        color = TawazunTextSecondary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                OutlinedButton(
+                                    onClick = { playingRec = rec },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("▶", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ▶ Video player dialog
+                if (playingRec != null) {
+                    val rec = playingRec!!
+                    Dialog(onDismissRequest = { playingRec = null }) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF101828)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column {
+                                AndroidView(
+                                    factory = { ctx ->
+                                        VideoView(ctx).apply {
+                                            setVideoURI(rec.uri)
+                                            val mc = MediaController(ctx)
+                                            setMediaController(mc)
+                                            mc.setAnchorView(this)
+                                            start()
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(230.dp)
+                                )
+                                TextButton(
+                                    onClick = { playingRec = null },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("✕ Band karein", fontSize = 12.sp, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (currentChild.mirroringActive) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
                     shape = RoundedCornerShape(10.dp),
@@ -429,7 +614,8 @@ fun StudentDeviceScreen(
                             if (!snapRunning) {
                                 Button(
                                     onClick = {
-                                        snapLauncher.launch(projectionManager.createScreenCaptureIntent())
+                                        pendingVideo = false
+                                        captureLauncher.launch(projectionManager.createScreenCaptureIntent())
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
                                     shape = RoundedCornerShape(6.dp),
