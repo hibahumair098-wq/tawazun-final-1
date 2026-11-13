@@ -2,6 +2,11 @@ package com.example.ui.student
 
 import android.content.Intent
 import android.provider.Settings
+import android.app.Activity
+import android.content.Context
+import android.media.projection.MediaProjectionManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -83,6 +88,8 @@ import com.example.data.model.Child
 import com.example.data.model.HomeworkTask
 import com.example.data.repository.TawazunRepository
 import com.example.data.usage.UsageTracker
+import com.example.service.GuardState
+import com.example.service.ScreenSnapService
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunErrorRed
@@ -126,6 +133,29 @@ fun StudentDeviceScreen(
     LaunchedEffect(Unit) {
         // App khulne par aaj ka asli usage parh kar cloud sync karo
         repository.refreshTodayUsage(context)
+    }
+
+    // --- 🛡️ APP GUARD (AccessibilityService — asli blocking) ---
+    var guardEnabled by remember { mutableStateOf(GuardState.isGuardEnabled(context)) }
+
+    // --- 🪞 SCREEN SNAP (MediaProjection — live mirror) ---
+    var snapRunning by remember { mutableStateOf(ScreenSnapService.isRunning) }
+    val projectionManager = remember {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+    val snapLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val serviceIntent = Intent(context, ScreenSnapService::class.java).apply {
+                putExtra(ScreenSnapService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(ScreenSnapService.EXTRA_RESULT_DATA, result.data)
+                putExtra(ScreenSnapService.EXTRA_FAMILY_ID, session?.familyId ?: "")
+                putExtra(ScreenSnapService.EXTRA_CHILD_ID, currentChild.id)
+            }
+            context.startForegroundService(serviceIntent)
+            snapRunning = true
+        }
     }
 
     val isBedtime = repository.isBedtimeActive(currentChild)
@@ -268,8 +298,7 @@ fun StudentDeviceScreen(
                 .background(MaterialTheme.colorScheme.background)
         ) {
             // 📊 Usage Access banner — asli tracking ke liye ek dafa permission
-            if (!usageAccessGranted) {
-                Card(
+            if (!usageAccessGranted) {                Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunWarningAmber),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
@@ -319,6 +348,112 @@ fun StudentDeviceScreen(
                     }
                 }
             }
+            // 🛡️ App Guard banner — asli blocking ke liye ek dafa permission
+            if (!guardEnabled) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunEmeraldDark),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            "🛡️ App Guard ON karein — Asli Blocking",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Time limit khatam hone par Tawazun apps ko khud band kar deta hai. Settings > Accessibility > \"Tawazun Guard\" on karein.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFD9EFE4),
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row {
+                            Button(
+                                onClick = {
+                                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Text("Settings Kholo", fontSize = 12.sp)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    guardEnabled = GuardState.isGuardEnabled(context)
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Text("✓ Check Dobara", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 🪞 Screen Snap card — mirror ON hone par dikhta hai
+            if (currentChild.mirroringActive) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            if (snapRunning) "🪞 Screen Snap LIVE chal raha hai" else "🪞 Parent ne Screen Mirror ON kiya hai",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = TawazunTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            if (snapRunning)
+                                "Har 30 second aap ki screen ka snapshot parent ko milta hai. Notification band hone tak chalta rahega."
+                            else
+                                "Allow karein taake parent aap ki screen dekh sake (study time monitoring).",
+                            fontSize = 11.sp,
+                            color = TawazunTextSecondary,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row {
+                            if (!snapRunning) {
+                                Button(
+                                    onClick = {
+                                        snapLauncher.launch(projectionManager.createScreenCaptureIntent())
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(38.dp)
+                                ) {
+                                    Text("🪞 Start Karein", fontSize = 12.sp)
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = {
+                                        context.stopService(Intent(context, ScreenSnapService::class.java))
+                                        snapRunning = false
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(38.dp)
+                                ) {
+                                    Text("Stop Karein", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             when (currentTab) {
                 0 -> StudentBalanceTab(
                     child = currentChild,
