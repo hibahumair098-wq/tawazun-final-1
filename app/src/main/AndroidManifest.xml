@@ -68,6 +68,12 @@
             android:name=".service.ScreenSnapService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 🎞️ Tawazun Screen Record: poori video (MediaProjection) -->
+        <service
+            android:name=".service.ScreenRecordService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
 
 </manifest>
