@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
         configureAppCheck(this, intent)
 
         setContent {
-            TawazunTheme(darkTheme = true) {
+            TawazunTheme(darkTheme = false) {
                 val repository = remember { TawazunRepository(applicationContext) }
                 val session by repository.currentSession.collectAsState()
                 val authError by repository.authError.collectAsState()
