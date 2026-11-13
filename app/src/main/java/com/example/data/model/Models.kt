@@ -36,6 +36,8 @@ data class Child(
     val bedtimeEnd: String = "06:30",
     val bedtimeActiveDays: List<Int> = listOf(1, 2, 3, 4, 5, 6, 7), // Sun to Sat
     val mirroringActive: Boolean = false,
+    val mirrorMode: String = "snap", // "snap" = live photos, "video" = poori recording
+    val videoToGallery: Boolean = true, // video Gallery (Movies/Tawazun) mein ya app folder mein
     val pairingCode: String = "TWZ-7492",
     val isRevoked: Boolean = false,
     val studentAuthUid: String? = null
