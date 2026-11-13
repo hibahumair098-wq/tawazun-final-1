@@ -1,5 +1,8 @@
 package com.example.ui.parent
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -76,6 +79,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -118,6 +123,7 @@ fun ParentDashboardScreen(
     val usageEvents by repository.usageEvents.collectAsState()
     val webAttempts by repository.webAttempts.collectAsState()
     val mirrorSessions by repository.mirrorSessions.collectAsState()
+    val screenSnaps by repository.screenSnaps.collectAsState()
     val auditLogs by repository.auditLogs.collectAsState()
     val subscription by repository.subscription.collectAsState()
     val childrenLoading by repository.childrenLoading.collectAsState()
@@ -447,7 +453,8 @@ fun ParentDashboardScreen(
                 3 -> MirrorTab(
                     child = currentChild,
                     sessions = mirrorSessions.filter { it.childId == selectedChildId },
-                    onToggleMirror = { active -> repository.toggleMirroring(currentChild.id, active) }
+                    onToggleMirror = { active -> repository.toggleMirroring(currentChild.id, active) },
+                    liveSnap = screenSnaps[currentChild.id]
                 )
                 4 -> ChildrenTab(
                     children = children,
@@ -1069,7 +1076,8 @@ fun RulesTab(
 fun MirrorTab(
     child: Child,
     sessions: List<com.example.data.model.MirrorSession>,
-    onToggleMirror: (Boolean) -> Unit
+    onToggleMirror: (Boolean) -> Unit,
+    liveSnap: Pair<String, Long>? = null
 ) {
     val activeSession = sessions.firstOrNull()
 
@@ -1079,6 +1087,80 @@ fun MirrorTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 🔴 ASLI LIVE SCREEN SNAP (bachay ke phone se, Firestore se)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "🔴 Live Screen Snap",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = TawazunErrorRed
+                        )
+                        Text(
+                            text = liveSnap?.second?.let {
+                                "Last: " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(it))
+                            } ?: "No snapshot yet",
+                            fontSize = 11.sp,
+                            color = TawazunTextSecondary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (liveSnap != null) {
+                        val bitmap = remember(liveSnap.first) {
+                            try {
+                                val bytes = Base64.decode(liveSnap.first, Base64.DEFAULT)
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Live screen snapshot",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.FillWidth
+                            )
+                        } else {
+                            Text(
+                                "Snapshot decode nahi hua — agli update par dobara try hoga.",
+                                fontSize = 12.sp,
+                                color = TawazunTextSecondary
+                            )
+                        }
+                    } else {
+                        Text(
+                            "Bachay ke phone par Screen Snap start hona chahiye:\n1. Neeche Mirror toggle ON karein\n2. Bachay ki app mein 🪞 card aa jayega\n3. Bacha 'Start' kare (ek dafa permission)",
+                            fontSize = 12.sp,
+                            color = TawazunTextSecondary,
+                            lineHeight = 17.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Har 30 second taaza hota hai • 3-Day Privacy Vault mein hi rehta hai",
+                        fontSize = 10.sp,
+                        color = TawazunTextSecondary
+                    )
+                }
+            }
+        }
+
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
