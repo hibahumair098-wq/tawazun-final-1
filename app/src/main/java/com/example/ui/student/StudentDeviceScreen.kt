@@ -5,10 +5,16 @@ import android.provider.Settings
 import android.app.Activity
 import android.content.Context
 import android.media.projection.MediaProjectionManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.MediaController
 import android.widget.VideoView
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.background
@@ -103,6 +109,7 @@ import com.example.ui.theme.TawazunGold
 import com.example.ui.theme.TawazunLockedGrey
 import com.example.ui.theme.TawazunSurface
 import com.example.ui.theme.TawazunSurfaceVariant
+import com.example.ui.theme.TawazunTealBg
 import com.example.ui.theme.TawazunTextPrimary
 import com.example.ui.theme.TawazunTextSecondary
 import com.example.ui.theme.TawazunWarningAmber
@@ -120,6 +127,7 @@ fun StudentDeviceScreen(
     val selectedChildId by repository.selectedChildId.collectAsState()
     val policiesMap by repository.policies.collectAsState()
     val homeworkTasks by repository.homeworkTasks.collectAsState()
+    val allowedWebsites by repository.allowedWebsites.collectAsState()
 
     val currentChild = children.find { it.id == selectedChildId } ?: children.first()
     val policies = policiesMap[currentChild.id] ?: emptyList()
@@ -129,8 +137,6 @@ fun StudentDeviceScreen(
     // 0 = Home / Tasks, 1 = Apps, 2 = Smart Chat, 3 = Browser, 4 = Bedtime
 
     var appLaunchBlockedDialog by remember { mutableStateOf<String?>(null) }
-    var browserUrl by remember { mutableStateOf("https://ilmkidunya.com/past-papers") }
-    var browserResult by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
     var chatMessageDraft by remember { mutableStateOf("") }
 
     // --- ASLI USAGE TRACKING (UsageStatsManager) ---
@@ -665,12 +671,10 @@ fun StudentDeviceScreen(
                 )
                 3 -> StudentBrowserTab(
                     child = currentChild,
-                    onTestUrl = { url ->
-                        browserUrl = url
-                        browserResult = repository.testDomainAttempt(currentChild.id, url)
-                    },
-                    currentUrl = browserUrl,
-                    lastResult = browserResult
+                    allowedWebsites = allowedWebsites,
+                    onVisit = { url, blocked ->
+                        repository.logWebVisit(currentChild.id, url, blocked)
+                    }
                 )
                 4 -> BedtimePreviewTab(
                     child = currentChild
@@ -869,7 +873,7 @@ fun StudentAppsTab(
 
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isLocked) Color(0xFF1B1F22) else TawazunSurface
+                    containerColor = if (isLocked) Color(0xFFF2F3F5) else TawazunSurface
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -1164,156 +1168,230 @@ fun ChatMessageBubble(
 @Composable
 fun StudentBrowserTab(
     child: Child,
-    onTestUrl: (String) -> Unit,
-    currentUrl: String,
-    lastResult: Pair<Boolean, String?>?
+    allowedWebsites: List<String>,
+    onVisit: (url: String, blocked: Boolean) -> Unit
 ) {
-    var inputUrl by remember { mutableStateOf(currentUrl) }
+    var openSite by remember { mutableStateOf<String?>(null) }
+
+    if (openSite != null) {
+        val site = openSite!!
+        InAppBrowser(
+            startUrl = site,
+            allowedWebsites = allowedWebsites,
+            onClose = { openSite = null },
+            onBlocked = { url -> onVisit(url, true) }
+        )
+        return
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Text("Safe Browser Navigation", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TawazunTextPrimary)
-        Text("Test URL wildcard blocking in real-time.", fontSize = 11.sp, color = TawazunTextSecondary)
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = inputUrl,
-                onValueChange = { inputUrl = it },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                placeholder = { Text("Enter domain or URL...") }
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = { onTestUrl(inputUrl) },
-                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
-            ) {
-                Text("Go")
-            }
-        }
+        Text("Safe Web", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TawazunTextPrimary)
+        Text("Sirf unhi websites par ja sakte hain jo parent ne allow ki hain.", fontSize = 11.sp, color = TawazunTextSecondary)
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Preset Test URLs (Including prompt test cases: m.youtube.com vs notyoutube.com)
-        Text("Quick Test URLs:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TawazunTextSecondary)
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(
-                onClick = {
-                    inputUrl = "https://m.youtube.com"
-                    onTestUrl("https://m.youtube.com")
-                },
-                modifier = Modifier.height(30.dp)
-            ) {
-                Text("m.youtube.com (Block)", fontSize = 10.sp, color = TawazunErrorRed)
-            }
-
-            OutlinedButton(
-                onClick = {
-                    inputUrl = "https://notyoutube.com"
-                    onTestUrl("https://notyoutube.com")
-                },
-                modifier = Modifier.height(30.dp)
-            ) {
-                Text("notyoutube.com (Allow)", fontSize = 10.sp, color = TawazunEmeraldPrimary)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(
-                onClick = {
-                    inputUrl = "https://ilmkidunya.com/past-papers"
-                    onTestUrl("https://ilmkidunya.com/past-papers")
-                },
-                modifier = Modifier.height(30.dp)
-            ) {
-                Text("ilmkidunya.com (Allow)", fontSize = 10.sp, color = TawazunEmeraldPrimary)
-            }
-
-            OutlinedButton(
-                onClick = {
-                    inputUrl = "https://vt.tiktok.com"
-                    onTestUrl("https://vt.tiktok.com")
-                },
-                modifier = Modifier.height(30.dp)
-            ) {
-                Text("vt.tiktok.com (Block)", fontSize = 10.sp, color = TawazunErrorRed)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Browser Render Result Box
-        if (lastResult != null) {
-            val (blocked, rule) = lastResult
+        if (allowedWebsites.isEmpty()) {
             Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = if (blocked) Color(0xFF2C1616) else Color(0xFF0F2620)
-                ),
+                colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
                         .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(
-                        imageVector = if (blocked) Icons.Default.Block else Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        tint = if (blocked) TawazunErrorRed else TawazunEmeraldPrimary,
-                        modifier = Modifier.size(54.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("\ud83d\udd13", fontSize = 36.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = if (blocked) "Website Blocked by Tawazun" else "Content Allowed",
-                        fontSize = 18.sp,
+                        "Parent ne abhi koi website allow nahi ki",
                         fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
                         color = TawazunTextPrimary
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (blocked) {
-                            "Domain '$currentUrl' is restricted under parent policy rule: '$rule'."
-                        } else {
-                            "Navigating safely to '$currentUrl'. Educational resource verified."
-                        },
-                        fontSize = 12.sp,
+                        "Jab parent Rules tab se website add karein ge, yahan list aa jayegi.",
+                        fontSize = 11.sp,
                         color = TawazunTextSecondary,
-                        textAlign = TextAlign.Center
+                        lineHeight = 15.sp
                     )
                 }
             }
         } else {
-            Box(
+            Text(
+                "Allowed Websites (${allowedWebsites.size})",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TawazunTextSecondary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            allowedWebsites.forEach { site ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clickable {
+                            onVisit(site, false)
+                            openSite = site
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("\ud83c\udf10", fontSize = 22.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                hostLabel(site),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = TawazunTextPrimary
+                            )
+                            Text(
+                                site,
+                                fontSize = 10.sp,
+                                color = TawazunTextSecondary,
+                                maxLines = 1
+                            )
+                        }
+                        Text(
+                            "Kholen \u2192",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TawazunEmeraldPrimary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** URL se saaf host nikaale (https://www. example.com/path \u2192 example.com). */
+private fun hostLabel(url: String): String {
+    var s = url.trim()
+    if (s.startsWith("https://")) s = s.removePrefix("https://")
+    if (s.startsWith("http://")) s = s.removePrefix("http://")
+    if (s.startsWith("www.")) s = s.removePrefix("www.")
+    return s.substringBefore('/')
+}
+
+/**
+ * \ud83c\udf10 In-App Browser — asli WebView, magar SIRF allowed websites.
+ * Koi dusri site khulne ki koshish kare to block + parent ko report.
+ */
+@Composable
+fun InAppBrowser(
+    startUrl: String,
+    allowedWebsites: List<String>,
+    onClose: () -> Unit,
+    onBlocked: (String) -> Unit
+) {
+    var blockedMsg by remember { mutableStateOf<String?>(null) }
+    var currentLabel by remember { mutableStateOf(hostLabel(startUrl)) }
+
+    BackHandler(onBack = onClose)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(TawazunTealBg)
+    ) {
+        // Top bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(TawazunSurface)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("\ud83d\udd12", fontSize = 16.sp)
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    currentLabel,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = TawazunTextPrimary,
+                    maxLines = 1
+                )
+                Text("Tawazun Safe Web", fontSize = 9.sp, color = TawazunTextSecondary)
+            }
+            OutlinedButton(
+                onClick = onClose,
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.height(34.dp)
+            ) {
+                Text("\u2715", fontSize = 13.sp)
+            }
+        }
+
+        if (blockedMsg != null) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(TawazunSurface),
-                contentAlignment = Alignment.Center
+                    .background(TawazunErrorRed.copy(alpha = 0.12f))
+                    .padding(14.dp)
             ) {
                 Text(
-                    "Tap a test URL above or enter a domain to test Tawazun wildcard domain blocking.",
-                    fontSize = 12.sp,
-                    color = TawazunTextSecondary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(24.dp)
+                    "Block ho gaya",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = TawazunErrorRed
+                )
+                Text(
+                    blockedMsg ?: "",
+                    fontSize = 11.sp,
+                    color = TawazunTextSecondary
                 )
             }
         }
+
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    setBackgroundColor(0xFFFFFFFF.toInt())
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): Boolean {
+                            val url = request?.url?.toString() ?: return false
+                            val host = request.url?.host ?: ""
+                            val allowed = allowedWebsites.any { allowedRaw ->
+                                val a = hostLabel(allowedRaw)
+                                host == a || host.endsWith(".$a")
+                            }
+                            return if (allowed) {
+                                currentLabel = host
+                                false
+                            } else {
+                                onBlocked(url)
+                                blockedMsg = "'$host' parent ki allowed list mein nahi hai."
+                                true
+                            }
+                        }
+                    }
+                    loadUrl(startUrl)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        )
     }
 }
 
@@ -1324,7 +1402,7 @@ fun BedtimePreviewTab(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF080D12))
+            .background(TawazunTealBg)
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
