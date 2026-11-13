@@ -12,8 +12,11 @@ import com.example.data.model.UserRole
 import com.example.data.model.UserSession
 import com.example.data.model.WebAttempt
 import android.content.Context
+import android.content.Intent
 import com.example.data.usage.UsageTracker
 import com.example.domain.DomainFilter
+import com.example.service.GuardState
+import com.example.service.ScreenSnapService
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
@@ -40,7 +43,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-class TawazunRepository {
+class TawazunRepository(private val appContext: Context? = null) {
 
     // REAL Firebase Authentication engine
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -52,6 +55,7 @@ class TawazunRepository {
     private var homeworkListener: ListenerRegistration? = null
     private var policiesListener: ListenerRegistration? = null
     private var usageListener: ListenerRegistration? = null
+    private var screenSnapListener: ListenerRegistration? = null
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -135,6 +139,10 @@ class TawazunRepository {
     // Usage events — student device se ASLI data (Firestore se LIVE)
     private val _usageEvents = MutableStateFlow<List<UsageEvent>>(emptyList())
     val usageEvents: StateFlow<List<UsageEvent>> = _usageEvents.asStateFlow()
+
+    // 🪞 Live Screen Snaps — childId → (base64, timestamp)
+    private val _screenSnaps = MutableStateFlow<Map<String, Pair<String, Long>>>(emptyMap())
+    val screenSnaps: StateFlow<Map<String, Pair<String, Long>>> = _screenSnaps.asStateFlow()
 
     // Web Attempts
     private val _webAttempts = MutableStateFlow<List<WebAttempt>>(
@@ -385,6 +393,10 @@ class TawazunRepository {
 
     fun logout() {
         val prevSession = _currentSession.value
+        // 🪞 Screen snap service bhi band
+        if (ScreenSnapService.isRunning) {
+            appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
+        }
         familyListener?.remove()
         familyListener = null
         homeworkListener?.remove()
@@ -393,6 +405,8 @@ class TawazunRepository {
         policiesListener = null
         usageListener?.remove()
         usageListener = null
+        screenSnapListener?.remove()
+        screenSnapListener = null
         _children.value = emptyList()
         _selectedChildId.value = ""
         _homeworkTasks.value = emptyList()
@@ -436,10 +450,73 @@ class TawazunRepository {
                 if (list.isNotEmpty() && list.none { it.id == selected }) {
                     _selectedChildId.value = list.first().id
                 }
+                // 🛡️ Guard update (homeworkUnlocked / bedtime badal sakte hain)
+                refreshGuardState()
+                // 🪞 Mirror OFF hua to snap service band
+                stopSnapIfRevoked()
             }
         attachHomeworkListener(familyId)
         attachPoliciesListener(familyId)
         attachUsageListener(familyId)
+        attachScreenSnapListener(familyId)
+    }
+
+    /** 🪞 Screen Snaps — LIVE (bachay ke phone ki taaza tasveer). */
+    private fun attachScreenSnapListener(familyId: String) {
+        screenSnapListener?.remove()
+        screenSnapListener = db.collection("families").document(familyId).collection("screenSnaps")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val map = mutableMapOf<String, Pair<String, Long>>()
+                snapshot.documents.forEach { doc ->
+                    val b64 = doc.getString("snapBase64") ?: return@forEach
+                    val at = doc.getLong("snapAt") ?: 0L
+                    map[doc.id] = b64 to at
+                }
+                _screenSnaps.value = map
+            }
+    }
+
+    /** 🪞 Parent ne mirror OFF kiya to student ke phone par snap service band karo. */
+    private fun stopSnapIfRevoked() {
+        val session = _currentSession.value ?: return
+        if (session.role != UserRole.STUDENT) return
+        val child = _children.value.find { it.id == session.childId } ?: return
+        if (!child.mirroringActive && ScreenSnapService.isRunning) {
+            appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
+            addAudit("MIRROR_STOPPED", session.email, "Screen Snap stopped (parent turned mirroring off).")
+        }
+    }
+
+    /**
+     * 🛡️ GUARD STATE — kya kya block karna hai ye compute kar ke GuardService ko do.
+     * Rule: (1) limit khatam = block, (2) homework unverified = entertainment/games block,
+     * (3) bedtime = entertainment/games block.
+     * Sirf STUDENT device par chalta hai (parent ka phone kabhi block nahi hota).
+     */
+    fun refreshGuardState() {
+        val session = _currentSession.value ?: return
+        if (session.role != UserRole.STUDENT) return
+        val childId = session.childId ?: return
+        val child = _children.value.find { it.id == childId } ?: return
+        val childPolicies = _policies.value[childId] ?: emptyList()
+
+        val blockedKeys = mutableSetOf<String>()
+        childPolicies.forEach { p ->
+            val isFun = p.category == AppCategory.ENTERTAINMENT || p.category == AppCategory.GAMING
+            val lockedByHomework = isFun && !child.homeworkUnlocked
+            val lockedByTimer = p.isBlockedByTimer
+            val bedtimeNow = isFun && isBedtimeActive(child)
+            if (lockedByHomework || lockedByTimer || bedtimeNow) {
+                blockedKeys.add(p.appKey)
+            }
+        }
+
+        val blockedPackages = mutableSetOf<String>()
+        blockedKeys.forEach { key ->
+            UsageTracker.packagesFor(key)?.let { blockedPackages.addAll(it) }
+        }
+        GuardState.update(appContext, blockedPackages)
     }
 
     /** Usage events — LIVE (student phone par jo chale, parent ko dikhta hai). */
@@ -513,6 +590,9 @@ class TawazunRepository {
             )
         }
         addAudit("USAGE_SYNC", session.email, "Real usage synced for $dateStr (${usage.size} apps).")
+
+        // 🛡️ Naya usage aaya — guard update (limit khatam hui ho to block lage)
+        refreshGuardState()
     }
 
     /** Homework tasks — LIVE (parent add kare to student ke phone par foran dikhta hai). */
@@ -525,6 +605,8 @@ class TawazunRepository {
                 _homeworkTasks.value = list
                 // Data change par unlock status dobara calculate (e.g. naya task aa gaya)
                 list.map { it.childId }.distinct().forEach { recomputeUnlock(it) }
+                // 🛡️ Guard update (verify hone par unlock hota hai)
+                refreshGuardState()
             }
     }
 
@@ -539,6 +621,8 @@ class TawazunRepository {
                     if (policy != null) (doc.getString("childId") ?: "") to policy else null
                 }
                 _policies.value = pairs.groupBy({ it.first }, { it.second })
+                // 🛡️ Guard update (limits badal sakti hain)
+                refreshGuardState()
             }
     }
 
