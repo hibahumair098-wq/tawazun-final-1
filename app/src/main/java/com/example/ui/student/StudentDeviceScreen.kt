@@ -83,7 +83,6 @@ import com.example.data.model.Child
 import com.example.data.model.HomeworkTask
 import com.example.data.repository.TawazunRepository
 import com.example.data.usage.UsageTracker
-import com.example.service.GuardState
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunErrorRed
@@ -128,9 +127,6 @@ fun StudentDeviceScreen(
         // App khulne par aaj ka asli usage parh kar cloud sync karo
         repository.refreshTodayUsage(context)
     }
-
-    // --- 🛡️ APP GUARD (AccessibilityService — asli blocking) ---
-    var guardEnabled by remember { mutableStateOf(GuardState.isGuardEnabled(context)) }
 
     val isBedtime = repository.isBedtimeActive(currentChild)
 
@@ -272,7 +268,8 @@ fun StudentDeviceScreen(
                 .background(MaterialTheme.colorScheme.background)
         ) {
             // 📊 Usage Access banner — asli tracking ke liye ek dafa permission
-            if (!usageAccessGranted) {                Card(
+            if (!usageAccessGranted) {
+                Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunWarningAmber),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
@@ -322,56 +319,6 @@ fun StudentDeviceScreen(
                     }
                 }
             }
-            // 🛡️ App Guard banner — asli blocking ke liye ek dafa permission
-            if (!guardEnabled) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = TawazunEmeraldDark),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            "🛡️ App Guard ON karein — Asli Blocking",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Time limit khatam hone par Tawazun apps ko khud band kar deta hai. Settings > Accessibility > \"Tawazun Guard\" on karein.",
-                            fontSize = 11.sp,
-                            color = Color(0xFFD9EFE4),
-                            lineHeight = 15.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row {
-                            Button(
-                                onClick = {
-                                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.height(38.dp)
-                            ) {
-                                Text("Settings Kholo", fontSize = 12.sp)
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    guardEnabled = GuardState.isGuardEnabled(context)
-                                },
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.height(38.dp)
-                            ) {
-                                Text("✓ Check Dobara", fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
-            }
-
             when (currentTab) {
                 0 -> StudentBalanceTab(
                     child = currentChild,
