@@ -497,6 +497,8 @@ class TawazunRepository(private val appContext: Context? = null) {
         if (user.isEmailVerified && !session.isEmailVerified) {
             _currentSession.value = session.copy(isEmailVerified = true)
             addAudit("EMAIL_VERIFIED", session.email, "Email verified successfully. Full access granted.")
+            // 🌐 Verification ke baad Browser Shield turant laga do
+            refreshGuardState()
         }
     }
 
@@ -593,6 +595,8 @@ class TawazunRepository(private val appContext: Context? = null) {
                 _allowedWebsites.value = (snapshot.get("websites") as? List<*>)
                     ?.mapNotNull { it as? String }
                     ?: emptyList()
+                // 🌐 Parent ne list badli — Browser Shield turant sync karo
+                refreshGuardState()
             }
     }
 
@@ -694,6 +698,18 @@ class TawazunRepository(private val appContext: Context? = null) {
         blockedKeys.forEach { key ->
             UsageTracker.packagesFor(key)?.let { blockedPackages.addAll(it) }
         }
+
+        // 🌐 BROWSER SHIELD: jab parent ne SafeWeb on kiya ho (allowed list non-empty)
+        // aur student linked+verified ho — tamam bahar ke browsers band, web sirf
+        // Tawazun ke Safe Browser se (wahan parent ki allowlist chalti hai).
+        // NOTE: verify hone se PEHLE shield nahi lagti — warna email ka
+        // verification link Chrome mein nahi khul sakta.
+        if (session.familyId.isNotBlank() && session.isEmailVerified &&
+            _allowedWebsites.value.isNotEmpty()
+        ) {
+            blockedPackages.addAll(UsageTracker.BROWSER_PACKAGES)
+        }
+
         GuardState.update(appContext, blockedPackages)
     }
 
