@@ -153,6 +153,11 @@ fun StudentDeviceScreen(
     // --- 🪞 SCREEN SNAP + 🎞️ VIDEO RECORD (MediaProjection — live mirror) ---
     var snapRunning by remember { mutableStateOf(ScreenSnapService.isRunning) }
     var videoRunning by remember { mutableStateOf(ScreenRecordService.isRunning) }
+    // Parent mirror OFF/mode badle to service flags dobara sync (UI stale na rahe)
+    LaunchedEffect(currentChild.mirroringActive, currentChild.mirrorMode) {
+        snapRunning = ScreenSnapService.isRunning
+        videoRunning = ScreenRecordService.isRunning
+    }
     var pendingVideo by remember { mutableStateOf(false) } // konsa mode start hoga
     var recTick by remember { mutableStateOf(0) } // recordings list refresh
     var playingRec by remember { mutableStateOf<RecItem?>(null) }
@@ -1377,6 +1382,7 @@ fun InAppBrowser(
                             }
                             return if (allowed) {
                                 currentLabel = host
+                                blockedMsg = null
                                 false
                             } else {
                                 onBlocked(url)
