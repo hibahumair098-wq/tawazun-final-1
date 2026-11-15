@@ -31,6 +31,29 @@ object UsageTracker {
         "chrome" to listOf("com.android.chrome")
     )
 
+    /**
+     * 🌐 BROWSER SHIELD — Safe Browser ke ilawa tamam mashhoor browsers ke packages.
+     * Jab parent allowed-websites list set kare, Guard in sab ko band kar deta hai —
+     * taake web browsing sirf Tawazun ke Safe Browser se ho (allowlist ke sath).
+     */
+    val BROWSER_PACKAGES: List<String> = listOf(
+        "com.android.chrome",            // Chrome
+        "com.chrome.beta",               // Chrome Beta
+        "com.chrome.dev",                // Chrome Dev
+        "com.chrome.canary",             // Chrome Canary
+        "org.mozilla.firefox",           // Firefox
+        "org.mozilla.focus",             // Firefox Focus
+        "com.opera.browser",             // Opera
+        "com.opera.mini.native",         // Opera Mini
+        "com.sec.android.app.sbrowser",  // Samsung Internet
+        "com.brave.browser",             // Brave
+        "com.microsoft.emmx",            // Microsoft Edge
+        "com.UCMobile.intl",             // UC Browser
+        "com.vivaldi.browser",           // Vivaldi
+        "com.kiwibrowser.browser",       // Kiwi Browser
+        "com.duckduckgo.mobile.android"  // DuckDuckGo
+    )
+
     /** Kya user ne Usage Access permission diya hai? */
     fun hasUsageAccess(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
