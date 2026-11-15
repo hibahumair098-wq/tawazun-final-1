@@ -45,6 +45,7 @@ import com.example.ui.auth.AuthScreen
 import com.example.ui.parent.ParentDashboardScreen
 import com.example.ui.student.StudentDeviceScreen
 import com.example.ui.theme.TawazunEmeraldPrimary
+import com.example.ui.theme.TawazunErrorRed
 import com.example.ui.theme.TawazunSurface
 import com.example.ui.theme.TawazunTextPrimary
 import com.example.ui.theme.TawazunTextSecondary
@@ -67,11 +68,12 @@ class MainActivity : ComponentActivity() {
         configureAppCheck(this, intent)
 
         setContent {
-            TawazunTheme(darkTheme = true) {
-                val repository = remember { TawazunRepository() }
+            TawazunTheme(darkTheme = false) {
+                val repository = remember { TawazunRepository(applicationContext) }
                 val session by repository.currentSession.collectAsState()
                 val authError by repository.authError.collectAsState()
                 val authLoading by repository.authLoading.collectAsState()
+                val verifyNotice by repository.verifyNotice.collectAsState()
                 val context = LocalContext.current
                 val coroutineScope = rememberCoroutineScope()
                 val credentialManager = remember { CredentialManager.create(context) }
@@ -109,10 +111,15 @@ class MainActivity : ComponentActivity() {
                                                 repository.loginWithGoogleIdToken(googleIdToken)
                                             }
                                         } catch (e: GetCredentialCancellationException) {
-                                            Log.w(TAG, "Google Sign-In cancelled: ${e.message}", e)
+                                            // User ne cancel kiya — koi error nahi
                                         } catch (e: Exception) {
                                             Log.e(TAG, "Google Sign-In error", e)
-                                            // SECURITY: error par login NAHI hota
+                                            // SECURITY: error par login NAHI hota — wazahat ke sath batado
+                                            repository.showAuthError(
+                                                "Google Sign-In nahi chala. Do wajah ho sakti hain: " +
+                                                    "(1) Firebase console mein SHA-1 add nahi hua hai, " +
+                                                    "(2) test-environment/emulator par Google account nahi khulta. Asli phone par try karein."
+                                            )
                                         }
                                     }
                                 },
@@ -127,10 +134,18 @@ class MainActivity : ComponentActivity() {
                                 repository.logout()
                             }
 
-                            if (!current.isEmailVerified) {
-                                // 🔒 VERIFICATION GATE: jab tak email verify nahi, andar entry NAHI
+                            if (current.role == UserRole.STUDENT && current.familyId.isBlank()) {
+                                // ⏳ Student account ban gaya — parent ke add hone ka intezar
+                                WaitingForParentScreen(
+                                    email = current.email,
+                                    onLogout = { repository.logout() },
+                                    modifier = Modifier.padding(innerPadding)
+                                )
+                            } else if (!current.isEmailVerified) {
+                                // 🔒 VERIFICATION GATE v2 — verify hone tak andar entry nahi
                                 EmailVerificationGateScreen(
                                     email = current.email,
+                                    notice = verifyNotice,
                                     onCheckAgain = {
                                         coroutineScope.launch { repository.refreshVerificationStatus() }
                                     },
@@ -171,13 +186,13 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * 🔒 Email Verification Gate — verify hone tak app ka andar ka rasta band.
- * User sirf 3 kaam kar sakta hai: link click karke "Check" dabana,
- * email dobara mangaana, ya log out.
+ * 🔒 Email Verification Gate v2 — verify hone tak andar ka rasta band.
+ * Resend par ASLI feedback milta hai (email chala gaya ya fail hua).
  */
 @Composable
 fun EmailVerificationGateScreen(
     email: String,
+    notice: String?,
     onCheckAgain: () -> Unit,
     onResend: () -> Unit,
     onLogout: () -> Unit,
@@ -207,12 +222,22 @@ fun EmailVerificationGateScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Hum ne verify-link bheja hai:\n$email\n\nApna inbox (aur SPAM folder) kholo aur \"Verify your email\" par click karo. Tab hi app mein entry milegi.",
+                    text = "Hum ne verify-link bheja hai:\n$email\n\n1️⃣ Apni Gmail kholen — SPAM folder bhi check karein\n2️⃣ \"Verify your email\" par tap karein (link Chrome mein khulega)\n3️⃣ Wapas Tawazun aayein aur neeche \"Check Karo\" dabayein",
                     fontSize = 13.sp,
                     color = TawazunTextSecondary,
                     textAlign = TextAlign.Center,
                     lineHeight = 19.sp
                 )
+                if (notice != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = notice,
+                        fontSize = 12.sp,
+                        color = if (notice.startsWith("✓")) TawazunEmeraldPrimary else TawazunErrorRed,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 16.sp
+                    )
+                }
                 Spacer(modifier = Modifier.height(20.dp))
                 Button(
                     onClick = onCheckAgain,
@@ -229,6 +254,72 @@ fun EmailVerificationGateScreen(
                     Text("📧 Email Dobara Bhejo (Resend)", fontSize = 13.sp)
                 }
                 Spacer(modifier = Modifier.height(4.dp))
+                TextButton(onClick = onLogout) {
+                    Text("Log Out", fontSize = 12.sp, color = TawazunTextSecondary)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * ⏳ Waiting for Parent — student ka account ban gaya / login ho gaya,
+ * magar parent ne abhi is email ko apni app mein add nahi kiya.
+ * Parent ke add karte hi yeh screen khud student app mein badal jati hai.
+ */
+@Composable
+fun WaitingForParentScreen(
+    email: String,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("⏳", fontSize = 48.sp)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Account Tayyar Hai!",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunTextPrimary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Ab parent se kahin ke apni Tawazun app mein aap ko add karein — yeh email use karein:",
+                    fontSize = 13.sp,
+                    color = TawazunTextSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 19.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = email,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunEmeraldPrimary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Parent ke add karte hi yeh screen khud badal jayegi — kuch karne ki zaroorat nahi. 🔄",
+                    fontSize = 12.sp,
+                    color = TawazunTextSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(20.dp))
                 TextButton(onClick = onLogout) {
                     Text("Log Out", fontSize = 12.sp, color = TawazunTextSecondary)
                 }
