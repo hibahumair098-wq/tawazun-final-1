@@ -638,13 +638,31 @@ class TawazunRepository(private val appContext: Context? = null) {
     }
 
     /** 🪞 Parent ne mirror OFF kiya to student ke phone par snap service band karo. */
+    /**
+     * 🪞🎞️ Parent ke mirror control par capture services ko sync karo:
+     * Mirror OFF = dono capture band. Mode badla = sirf naye mode ki service rahe.
+     */
     private fun stopSnapIfRevoked() {
         val session = _currentSession.value ?: return
         if (session.role != UserRole.STUDENT) return
         val child = _children.value.find { it.id == session.childId } ?: return
-        if (!child.mirroringActive && ScreenSnapService.isRunning) {
+        if (!child.mirroringActive) {
+            if (ScreenSnapService.isRunning) {
+                appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
+                addAudit("MIRROR_STOPPED", session.email, "Screen Snap stopped (parent turned mirroring off).")
+            }
+            if (ScreenRecordService.isRunning) {
+                appContext?.stopService(Intent(appContext, ScreenRecordService::class.java))
+                addAudit("MIRROR_STOPPED", session.email, "Video recording stopped (parent turned mirroring off).")
+            }
+        } else if (child.mirrorMode != "video" && ScreenRecordService.isRunning) {
+            // Mode video se snap par badal gaya — recording band
+            appContext?.stopService(Intent(appContext, ScreenRecordService::class.java))
+            addAudit("MIRROR_MODE_SWITCH", session.email, "Video recording stopped (parent switched to Snap mode).")
+        } else if (child.mirrorMode == "video" && ScreenSnapService.isRunning) {
+            // Mode snap se video par badal gaya — snap band
             appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
-            addAudit("MIRROR_STOPPED", session.email, "Screen Snap stopped (parent turned mirroring off).")
+            addAudit("MIRROR_MODE_SWITCH", session.email, "Screen Snap stopped (parent switched to Video mode).")
         }
     }
 
@@ -1217,6 +1235,24 @@ class TawazunRepository(private val appContext: Context? = null) {
             .addOnFailureListener { }
         if (blocked) {
             addAudit("WEB_BLOCK", "SafeWeb", "Blocked navigation to '$rawUrl' (not in allowed list) for child $childId")
+        }
+        // 3-Day Privacy Vault: purani attempts ki safai
+        cleanupOldWebAttempts(familyId)
+    }
+
+    /** 🕓 3 din se purani web attempts Firestore se mita do (privacy guarantee). */
+    private fun cleanupOldWebAttempts(familyId: String) {
+        try {
+            val cutoff = System.currentTimeMillis() - 3L * 24 * 3600 * 1000
+            db.collection("families").document(familyId).collection("webAttempts")
+                .whereLessThan("attemptedAt", cutoff).limit(50).get()
+                .addOnSuccessListener { snap ->
+                    if (snap.documents.isEmpty()) return@addOnSuccessListener
+                    val batch = db.batch()
+                    snap.documents.forEach { batch.delete(it.reference) }
+                    batch.commit()
+                }
+        } catch (_: Exception) {
         }
     }
 
