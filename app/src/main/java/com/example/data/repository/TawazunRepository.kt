@@ -16,6 +16,7 @@ import android.content.Intent
 import com.example.data.usage.UsageTracker
 import com.example.domain.DomainFilter
 import com.example.service.GuardState
+import com.example.service.ScreenRecordService
 import com.example.service.ScreenSnapService
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
@@ -58,6 +59,7 @@ class TawazunRepository(private val appContext: Context? = null) {
     private var screenSnapListener: ListenerRegistration? = null
     private var webConfigListener: ListenerRegistration? = null
     private var webAttemptsListener: ListenerRegistration? = null
+    private var childWaitListener: ListenerRegistration? = null
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -95,6 +97,17 @@ class TawazunRepository(private val appContext: Context? = null) {
                         )
                         _selectedChildId.value = child.id
                         attachChildrenListener(child.familyId)
+                    } else if (getSavedRole() == UserRole.STUDENT) {
+                        // ⏳ Pending student — account hai, parent ne abhi add nahi kiya
+                        _currentSession.value = UserSession(
+                            email = email,
+                            role = UserRole.STUDENT,
+                            familyId = "",
+                            childId = null,
+                            isEmailVerified = user.isEmailVerified,
+                            consentAccepted = true
+                        )
+                        attachChildWaitListener(email)
                     } else {
                         _currentSession.value = UserSession(
                             email = email,
@@ -227,6 +240,7 @@ class TawazunRepository(private val appContext: Context? = null) {
             )
             val uid = auth.currentUser?.uid
             if (uid != null) startFamilySession(uid, cleanEmail)
+            saveRolePref(UserRole.PARENT)
             addAudit("PARENT_SIGNUP", cleanEmail, "New parent account created via Firebase Auth.")
             true
         } catch (e: Exception) {
@@ -254,6 +268,7 @@ class TawazunRepository(private val appContext: Context? = null) {
             )
             val uid = auth.currentUser?.uid
             if (uid != null) startFamilySession(uid, cleanEmail)
+            saveRolePref(UserRole.PARENT)
             addAudit("PARENT_LOGIN", cleanEmail, "Parent logged in via Firebase Auth. Student data is now viewable by verified parent.")
             true
         } catch (e: Exception) {
@@ -265,7 +280,8 @@ class TawazunRepository(private val appContext: Context? = null) {
     }
 
     /** Naya STUDENT account banao (email + password) — asli Firebase Auth.
-     *  Pehle check: parent ne ye email apni family mein add kiya hai ya nahi. */
+     *  Account PEHLE ban jata hai. Agar parent ne ye email add ki hai to seedha
+     *  student mode — warna "parent ke add hone ka intezar" screen. */
     suspend fun signUpStudent(email: String, password: String): Boolean {
         val cleanEmail = email.trim()
         if (password.length < 6) {
@@ -274,29 +290,12 @@ class TawazunRepository(private val appContext: Context? = null) {
         }
         _authLoading.value = true
         return try {
-            val child = findChildByEmail(cleanEmail)
-            if (child == null) {
-                _authError.value = "Ye email abhi kisi family mein add nahi. Parent se pehle apne app par add karwayein."
-                return false
-            }
             withContext(Dispatchers.IO) {
                 Tasks.await(auth.createUserWithEmailAndPassword(cleanEmail, password))
-                // Asli email check: Firebase inbox mein verify-link email bhejta hai
+                // Email verify link (optional — login kabhi block nahi hota)
                 auth.currentUser?.sendEmailVerification()
             }
-            linkStudentToChild(child, auth.currentUser?.uid)
-            _children.value = listOf(child)
-            _currentSession.value = UserSession(
-                email = cleanEmail,
-                role = UserRole.STUDENT,
-                familyId = child.familyId,
-                childId = child.id,
-                isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
-                consentAccepted = true
-            )
-            _selectedChildId.value = child.id
-            attachChildrenListener(child.familyId)
-            addAudit("STUDENT_SIGNUP", cleanEmail, "New student account created via Firebase Auth (${child.name}).")
+            startStudentSession(cleanEmail, "STUDENT_SIGNUP", "New student account created via Firebase Auth.")
             true
         } catch (e: Exception) {
             _authError.value = friendlyAuthError(e)
@@ -306,23 +305,37 @@ class TawazunRepository(private val appContext: Context? = null) {
         }
     }
 
-    /** Student REAL login (email + password) — Firestore mein parent ke add kiye bachay se match hota hai. */
+    /** Student REAL login (email + password) — account se login hota hai;
+     *  parent ke add karne par student mode khud jud jata hai. */
     suspend fun signInStudent(email: String, password: String): Boolean {
         val cleanEmail = email.trim()
         _authLoading.value = true
         return try {
-            val child = findChildByEmail(cleanEmail)
-            if (child == null) {
-                _authError.value = "Ye email abhi kisi family mein add nahi. Parent se pehle apne app par add karwayein."
-                return false
-            }
             withContext(Dispatchers.IO) {
                 Tasks.await(auth.signInWithEmailAndPassword(cleanEmail, password))
             }
-            linkStudentToChild(child, auth.currentUser?.uid)
+            startStudentSession(cleanEmail, "STUDENT_LOGIN", "Student logged in via Firebase Auth on device.")
+            true
+        } catch (e: Exception) {
+            _authError.value = friendlyAuthError(e)
+            false
+        } finally {
+            _authLoading.value = false
+        }
+    }
+
+    /**
+     * Student session: agar parent ne is email ko add kiya hai to seedha andar,
+     * warna "waiting for parent" state — aur parent ke add karte hi KHUD jud jata hai.
+     */
+    private suspend fun startStudentSession(email: String, auditAction: String, auditDetail: String) {
+        val uid = auth.currentUser?.uid
+        val child = findChildByEmail(email)
+        if (child != null) {
+            linkStudentToChild(child, uid)
             _children.value = listOf(child)
             _currentSession.value = UserSession(
-                email = cleanEmail,
+                email = email,
                 role = UserRole.STUDENT,
                 familyId = child.familyId,
                 childId = child.id,
@@ -331,13 +344,65 @@ class TawazunRepository(private val appContext: Context? = null) {
             )
             _selectedChildId.value = child.id
             attachChildrenListener(child.familyId)
-            addAudit("STUDENT_LOGIN", cleanEmail, "Student logged in via Firebase Auth on device (${child.name}). Parental monitoring view is locked.")
-            true
-        } catch (e: Exception) {
-            _authError.value = friendlyAuthError(e)
-            false
-        } finally {
-            _authLoading.value = false
+            addAudit(auditAction, email, "$auditDetail (${child.name}). Parental monitoring view is locked.")
+        } else {
+            // Account ban gaya — magar parent ne abhi ye email add nahi kiya
+            _currentSession.value = UserSession(
+                email = email,
+                role = UserRole.STUDENT,
+                familyId = "",
+                childId = null,
+                isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
+                consentAccepted = true
+            )
+            _children.value = emptyList()
+            attachChildWaitListener(email)
+            addAudit(auditAction, email, "$auditDetail Student abhi parent ke add hone ka intezar kar raha hai.")
+        }
+        saveRolePref(UserRole.STUDENT)
+    }
+
+    /** ⏳ Parent ke add karte hi student ka account khud jud jata hai (LIVE listener). */
+    private fun attachChildWaitListener(email: String) {
+        childWaitListener?.remove()
+        val lower = email.trim().lowercase(Locale.ROOT)
+        childWaitListener = db.collectionGroup("children")
+            .whereEqualTo("studentEmail", lower)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val child = snapshot.documents.firstOrNull()?.toChild() ?: return@addSnapshotListener
+                childWaitListener?.remove()
+                childWaitListener = null
+                linkStudentToChild(child, auth.currentUser?.uid)
+                _children.value = listOf(child)
+                _currentSession.value = UserSession(
+                    email = email,
+                    role = UserRole.STUDENT,
+                    familyId = child.familyId,
+                    childId = child.id,
+                    isEmailVerified = auth.currentUser?.isEmailVerified ?: false,
+                    consentAccepted = true
+                )
+                _selectedChildId.value = child.id
+                attachChildrenListener(child.familyId)
+                addAudit("STUDENT_LINKED", email, "Parent added this student — account linked automatically (${child.name}).")
+            }
+    }
+
+    /** Role yaad rakhne ke liye (app restart par sahi session wapas aaye). */
+    private fun saveRolePref(role: UserRole?) {
+        val ctx = appContext ?: return
+        ctx.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE).edit()
+            .putString("role", role?.name ?: "")
+            .apply()
+    }
+
+    private fun getSavedRole(): UserRole? {
+        val ctx = appContext ?: return null
+        return when (ctx.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE).getString("role", "")) {
+            "PARENT" -> UserRole.PARENT
+            "STUDENT" -> UserRole.STUDENT
+            else -> null
         }
     }
 
@@ -350,15 +415,36 @@ class TawazunRepository(private val appContext: Context? = null) {
                 Tasks.await(auth.signInWithCredential(credential))
             }
             val user = auth.currentUser
-            _currentSession.value = UserSession(
-                email = user?.email ?: "",
-                role = UserRole.PARENT,
-                familyId = user?.uid ?: "",
-                isEmailVerified = user?.isEmailVerified ?: true,
-                consentAccepted = true
-            )
-            if (user != null) startFamilySession(user.uid, user.email ?: "")
-            addAudit("PARENT_LOGIN", user?.email ?: "google-user", "Parent logged in with Google Sign-In (Firebase Auth).")
+            val email = user?.email ?: ""
+            // Google se aane wala bacha bhi ho sakta hai — email se role detect karo
+            val child = findChildByEmail(email)
+            if (child != null) {
+                linkStudentToChild(child, user?.uid)
+                _children.value = listOf(child)
+                _currentSession.value = UserSession(
+                    email = email,
+                    role = UserRole.STUDENT,
+                    familyId = child.familyId,
+                    childId = child.id,
+                    isEmailVerified = user?.isEmailVerified ?: true,
+                    consentAccepted = true
+                )
+                _selectedChildId.value = child.id
+                attachChildrenListener(child.familyId)
+                saveRolePref(UserRole.STUDENT)
+                addAudit("STUDENT_LOGIN_GOOGLE", email, "Student logged in with Google Sign-In (${child.name}).")
+            } else {
+                _currentSession.value = UserSession(
+                    email = email,
+                    role = UserRole.PARENT,
+                    familyId = user?.uid ?: "",
+                    isEmailVerified = user?.isEmailVerified ?: true,
+                    consentAccepted = true
+                )
+                if (user != null) startFamilySession(user.uid, email)
+                saveRolePref(UserRole.PARENT)
+                addAudit("PARENT_LOGIN", email, "Parent logged in with Google Sign-In (Firebase Auth).")
+            }
             true
         } catch (e: Exception) {
             _authError.value = friendlyAuthError(e)
@@ -372,9 +458,33 @@ class TawazunRepository(private val appContext: Context? = null) {
         _authError.value = null
     }
 
-    /** Verify-email link dobara bhejo (banner ka Resend button). */
+    /** UI se koi helpful error dikhane ke liye (jaise Google Sign-In ka setup missing). */
+    fun showAuthError(message: String) {
+        _authError.value = message
+    }
+
+    /** Verify-email ka asli feedback (gate screen par dikhata hai). */
+    private val _verifyNotice = MutableStateFlow<String?>(null)
+    val verifyNotice: StateFlow<String?> = _verifyNotice.asStateFlow()
+
+    fun clearVerifyNotice() {
+        _verifyNotice.value = null
+    }
+
+    /** Verify-email link dobara bhejo — asli feedback ke sath (chala / fail). */
     fun resendVerificationEmail() {
-        auth.currentUser?.sendEmailVerification()
+        val user = auth.currentUser
+        if (user == null) {
+            _verifyNotice.value = "Pehle login karein phir resend karein."
+            return
+        }
+        user.sendEmailVerification()
+            .addOnSuccessListener {
+                _verifyNotice.value = "✓ Email dobara bhej diya gaya — inbox (aur SPAM) check karein."
+            }
+            .addOnFailureListener { e ->
+                _verifyNotice.value = "Email nahi bhej saken: ${e.message} — thodi der baad dobara try karein."
+            }
     }
 
     /** "Maine link click kar diya" — Firebase se taaza status check karo. */
@@ -396,6 +506,13 @@ class TawazunRepository(private val appContext: Context? = null) {
         if (ScreenSnapService.isRunning) {
             appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
         }
+        // 🎞️ Video recording service bhi band
+        if (ScreenRecordService.isRunning) {
+            appContext?.stopService(Intent(appContext, ScreenRecordService::class.java))
+        }
+        childWaitListener?.remove()
+        childWaitListener = null
+        saveRolePref(null)
         familyListener?.remove()
         familyListener = null
         homeworkListener?.remove()
@@ -672,10 +789,19 @@ class TawazunRepository(private val appContext: Context? = null) {
     /** Firestore mein is email ka bacha dhoondo (sari families ke children mein). */
     private suspend fun findChildByEmail(email: String): Child? = withContext(Dispatchers.IO) {
         try {
-            val snap = Tasks.await(
-                db.collectionGroup("children").whereEqualTo("studentEmail", email).limit(1).get()
+            // Case-insensitive: parent ne jitna bhi type kiya ho (Hiba@ / hiba@), mil jaye
+            val lower = email.trim().lowercase(Locale.ROOT)
+            var snap = Tasks.await(
+                db.collectionGroup("children").whereEqualTo("studentEmail", lower).limit(1).get()
             )
-            snap.documents.firstOrNull()?.toChild()
+            var doc = snap.documents.firstOrNull()
+            if (doc == null && lower != email.trim()) {
+                snap = Tasks.await(
+                    db.collectionGroup("children").whereEqualTo("studentEmail", email.trim()).limit(1).get()
+                )
+                doc = snap.documents.firstOrNull()
+            }
+            doc?.toChild()
         } catch (e: Exception) {
             null
         }
@@ -692,7 +818,7 @@ class TawazunRepository(private val appContext: Context? = null) {
     /** Parent apne family mein naya bacha add kare — Firestore mein hamesha ke liye mehfooz. */
     fun addChild(name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String) {
         val parentUid = auth.currentUser?.uid ?: return
-        val cleanEmail = studentEmail.trim()
+        val cleanEmail = studentEmail.trim().lowercase(Locale.ROOT)
         if (name.isBlank() || !cleanEmail.contains("@")) {
             _authError.value = "Bachay ka naam aur sahi email zaroori hai."
             return
