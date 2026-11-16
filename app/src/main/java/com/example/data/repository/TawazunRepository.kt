@@ -60,6 +60,9 @@ class TawazunRepository(private val appContext: Context? = null) {
     private var webConfigListener: ListenerRegistration? = null
     private var webAttemptsListener: ListenerRegistration? = null
     private var childWaitListener: ListenerRegistration? = null
+    private var subscriptionListener: ListenerRegistration? = null
+    private var linkRequestsListener: ListenerRegistration? = null
+    private var myRequestListener: ListenerRegistration? = null
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -215,6 +218,14 @@ class TawazunRepository(private val appContext: Context? = null) {
     private val _subscription = MutableStateFlow(SubscriptionInfo())
     val subscription: StateFlow<SubscriptionInfo> = _subscription.asStateFlow()
 
+    // 📨 Student→Parent link requests (parent ki pending list)
+    private val _linkRequests = MutableStateFlow<List<LinkRequest>>(emptyList())
+    val linkRequests: StateFlow<List<LinkRequest>> = _linkRequests.asStateFlow()
+
+    // 📨 Student ki khud ki bheji hui request (waiting screen ke liye)
+    private val _myRequest = MutableStateFlow<LinkRequest?>(null)
+    val myRequest: StateFlow<LinkRequest?> = _myRequest.asStateFlow()
+
     // --- REAL AUTHENTICATION (Firebase Auth) ---
 
     /** Naya PARENT account banao (email + password) — asli Firebase Auth. */
@@ -357,6 +368,7 @@ class TawazunRepository(private val appContext: Context? = null) {
             )
             _children.value = emptyList()
             attachChildWaitListener(email)
+            attachMyRequestListener(email)
             addAudit(auditAction, email, "$auditDetail Student abhi parent ke add hone ka intezar kar raha hai.")
         }
         saveRolePref(UserRole.STUDENT)
@@ -406,9 +418,178 @@ class TawazunRepository(private val appContext: Context? = null) {
         }
     }
 
+    // ==================== 📨 LINK REQUESTS (Student → Parent) ====================
+
+    /** Student: parent ko approval request bhejo ("ye mera bacha hai" wali). */
+    fun sendRequestToParent(parentEmail: String) {
+        val session = _currentSession.value ?: return
+        if (session.role != UserRole.STUDENT) return
+        val clean = parentEmail.trim().lowercase(Locale.ROOT)
+        if (!clean.contains("@") || !clean.contains(".")) {
+            _authError.value = "Parent ka sahi email likhein (jaise abc@gmail.com)."
+            return
+        }
+        if (clean == session.email.trim().lowercase(Locale.ROOT)) {
+            _authError.value = "Ye to aap ka apna email hai! Parent ka email likhein."
+            return
+        }
+        val studentName = session.email.substringBefore("@").replaceFirstChar { it.uppercase() }
+        val doc = db.collection("linkRequests").document()
+        val req = LinkRequest(
+            id = doc.id,
+            studentEmail = session.email.trim().lowercase(Locale.ROOT),
+            parentEmail = clean,
+            studentName = studentName
+        )
+        doc.set(
+            mapOf(
+                "studentEmail" to req.studentEmail,
+                "parentEmail" to req.parentEmail,
+                "studentName" to req.studentName,
+                "status" to "pending",
+                "createdAt" to System.currentTimeMillis()
+            )
+        ).addOnSuccessListener {
+            _myRequest.value = req
+            addAudit("LINK_REQUEST_SENT", session.email, "Student sent approval request to parent: $clean")
+        }.addOnFailureListener { e ->
+            _authError.value = "Request nahi bhej saken: ${e.message}"
+        }
+    }
+
+    /** Student: apni request ka LIVE status (waiting screen par dikhta hai). */
+    private fun attachMyRequestListener(email: String) {
+        myRequestListener?.remove()
+        val lower = email.trim().lowercase(Locale.ROOT)
+        myRequestListener = db.collection("linkRequests")
+            .whereEqualTo("studentEmail", lower)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _myRequest.value = snapshot.documents
+                    .mapNotNull { it.toLinkRequest() }
+                    .filter { it.status != "approved" }
+                    .maxByOrNull { it.createdAt }
+            }
+    }
+
+    /** Parent: mujhe aane wali pending requests — LIVE. */
+    private fun attachLinkRequestsListener(parentEmail: String) {
+        linkRequestsListener?.remove()
+        val lower = parentEmail.trim().lowercase(Locale.ROOT)
+        linkRequestsListener = db.collection("linkRequests")
+            .whereEqualTo("parentEmail", lower)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _linkRequests.value = snapshot.documents
+                    .mapNotNull { it.toLinkRequest() }
+                    .filter { it.status == "pending" }
+            }
+    }
+
+    /** Parent: APPROVE = bacha add ho jata hai (student khud link ho jata hai). */
+    fun approveRequest(request: LinkRequest, name: String, grade: String, deviceModel: String, avatarEmoji: String) {
+        if (name.isBlank() || request.studentEmail.isBlank()) {
+            _authError.value = "Bachay ka naam zaroori hai."
+            return
+        }
+        if (!addChild(name, grade, request.studentEmail, deviceModel, avatarEmoji)) return
+        db.collection("linkRequests").document(request.id)
+            .update(mapOf("status" to "approved", "familyId" to (_currentSession.value?.familyId ?: "")))
+            .addOnSuccessListener {
+                addAudit(
+                    "LINK_REQUEST_APPROVED", _currentSession.value?.email ?: "Parent",
+                    "Approved ${request.studentName} (${request.studentEmail}) — child linked."
+                )
+            }
+    }
+
+    /** Parent: request reject. */
+    fun rejectRequest(requestId: String) {
+        db.collection("linkRequests").document(requestId)
+            .update(mapOf("status" to "rejected"))
+            .addOnSuccessListener {
+                addAudit("LINK_REQUEST_REJECTED", _currentSession.value?.email ?: "Parent", "Rejected a student link request.")
+            }
+    }
+
+    // ==================== 🎁 TRIAL & SUBSCRIPTION (₨299 Coming Soon) ====================
+
+    private var trialEnsureAttempted = false
+
+    /** Pehla bacha milte hi 3-din FREE trial shuru (sirf 1 dafa, doc na ho tabhi). */
+    private fun ensureTrialStarted(familyId: String) {
+        if (trialEnsureAttempted) return
+        trialEnsureAttempted = true
+        db.collection("families").document(familyId).collection("subscription").document("status").get()
+            .addOnSuccessListener { doc ->
+                if (!doc.exists()) {
+                    val now = System.currentTimeMillis()
+                    db.collection("families").document(familyId).collection("subscription").document("status")
+                        .set(
+                            mapOf(
+                                "plan" to "trial",
+                                "trialStart" to now,
+                                "trialEnd" to now + 3L * 24 * 3600 * 1000,
+                                "childLimit" to 1L
+                            )
+                        )
+                    addAudit("TRIAL_STARTED", _currentSession.value?.email ?: "Family", "3-day free trial started (1 child limit).")
+                }
+            }
+    }
+
+    /** 🎁 Subscription LIVE listener — trialEnd guzarne par status khud TRIAL_EXPIRED. */
+    private fun attachSubscriptionListener(familyId: String) {
+        subscriptionListener?.remove()
+        subscriptionListener = db.collection("families").document(familyId).collection("subscription").document("status")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                if (!snapshot.exists()) {
+                    // Trial abhi shuru nahi hui — koi lock nahi
+                    _subscription.value = SubscriptionInfo(status = "ACTIVE_TRIAL", trialDaysRemaining = 3)
+                    return@addSnapshotListener
+                }
+                val plan = snapshot.getString("plan") ?: "trial"
+                val trialEnd = snapshot.getLong("trialEnd") ?: 0L
+                val now = System.currentTimeMillis()
+                _subscription.value = when {
+                    plan == "paid" -> SubscriptionInfo(status = "ACTIVE_SUBSCRIPTION", trialDaysRemaining = 0)
+                    trialEnd < now -> SubscriptionInfo(status = "TRIAL_EXPIRED", trialDaysRemaining = 0)
+                    else -> SubscriptionInfo(
+                        status = "ACTIVE_TRIAL",
+                        trialDaysRemaining = ((trialEnd - now) / 86400000L).toInt() + 1
+                    )
+                }
+            }
+    }
+
+    /** Trial khatam ke baad demo renew (asli ₨299 Play Billing baad mein aayega). */
+    fun extendDemoTrial(days: Int = 7) {
+        val fid = _currentSession.value?.familyId ?: return
+        val newEnd = System.currentTimeMillis() + days * 24L * 3600 * 1000
+        db.collection("families").document(fid).collection("subscription").document("status")
+            .set(mapOf("plan" to "trial", "trialEnd" to newEnd), SetOptions.merge())
+            .addOnSuccessListener {
+                addAudit("TRIAL_EXTENDED", _currentSession.value?.email ?: "Parent", "Demo trial extended by $days days (₨299 Play Billing coming soon).")
+            }
+    }
+
+    private fun DocumentSnapshot.toLinkRequest(): LinkRequest? = try {
+        LinkRequest(
+            id = id,
+            studentEmail = getString("studentEmail") ?: "",
+            parentEmail = getString("parentEmail") ?: "",
+            studentName = getString("studentName") ?: "",
+            status = getString("status") ?: "pending",
+            createdAt = getLong("createdAt") ?: 0L,
+            familyId = getString("familyId") ?: ""
+        )
+    } catch (_: Exception) {
+        null
+    }
+
     /** Google Sign-In ka asli Firebase login (idToken se). */
-    suspend fun loginWithGoogleIdToken(idToken: String): Boolean {
-        _authLoading.value = true
+    suspend fun loginWithGoogleIdToken(idToken: String): Boolean {        _authLoading.value = true
         return try {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             withContext(Dispatchers.IO) {
@@ -529,6 +710,13 @@ class TawazunRepository(private val appContext: Context? = null) {
         webConfigListener = null
         webAttemptsListener?.remove()
         webAttemptsListener = null
+        subscriptionListener?.remove()
+        subscriptionListener = null
+        linkRequestsListener?.remove()
+        linkRequestsListener = null
+        myRequestListener?.remove()
+        myRequestListener = null
+        trialEnsureAttempted = false
         _children.value = emptyList()
         _selectedChildId.value = ""
         _homeworkTasks.value = emptyList()
@@ -568,6 +756,8 @@ class TawazunRepository(private val appContext: Context? = null) {
                 if (error != null || snapshot == null) return@addSnapshotListener
                 val list = snapshot.documents.mapNotNull { it.toChild() }
                 _children.value = list
+                // 🎁 Pehla bacha milte hi 3-din trial shuru (agar pehle se na ho)
+                if (list.isNotEmpty()) ensureTrialStarted(familyId)
                 val selected = _selectedChildId.value
                 if (list.isNotEmpty() && list.none { it.id == selected }) {
                     _selectedChildId.value = list.first().id
@@ -583,6 +773,13 @@ class TawazunRepository(private val appContext: Context? = null) {
         attachScreenSnapListener(familyId)
         attachWebConfigListener(familyId)
         attachWebAttemptsListener(familyId)
+        attachSubscriptionListener(familyId)
+        // 📨 Parent ho to student requests bhi suno
+        _currentSession.value?.let { s ->
+            if (s.role == UserRole.PARENT && s.email.isNotBlank()) {
+                attachLinkRequestsListener(s.email)
+            }
+        }
     }
 
     /** 🌐 Parent ki allowed-websites list — LIVE (webConfig/allowed doc). */
@@ -850,12 +1047,17 @@ class TawazunRepository(private val appContext: Context? = null) {
     }
 
     /** Parent apne family mein naya bacha add kare — Firestore mein hamesha ke liye mehfooz. */
-    fun addChild(name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String) {
-        val parentUid = auth.currentUser?.uid ?: return
+    fun addChild(name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String): Boolean {
+        val parentUid = auth.currentUser?.uid ?: return false
         val cleanEmail = studentEmail.trim().lowercase(Locale.ROOT)
         if (name.isBlank() || !cleanEmail.contains("@")) {
             _authError.value = "Bachay ka naam aur sahi email zaroori hai."
-            return
+            return false
+        }
+        // 🎁 1-bacha limit (Free Trial aur ₨299 single plan dono mein)
+        if (_children.value.isNotEmpty()) {
+            _authError.value = "Free Trial mein sirf 1 bacha hota hai. ₨299/month plan mein bhi 1 account — Coming Soon!"
+            return false
         }
         val docRef = db.collection("families").document(parentUid).collection("children").document()
         val child = Child(
@@ -882,6 +1084,7 @@ class TawazunRepository(private val appContext: Context? = null) {
             .addOnFailureListener { e ->
                 _authError.value = "Bacha save nahi hua: ${e.message}"
             }
+        return true
     }
 
     /** Naye bachay ke liye shuruaati app limits. */
@@ -1398,3 +1601,18 @@ class TawazunRepository(private val appContext: Context? = null) {
         _auditLogs.value = listOf(log) + _auditLogs.value
     }
 }
+
+/**
+ * 📨 Student ki parent-approval request.
+ * Student waiting screen se parent ka email dalti hai → ye doc banta hai →
+ * parent ke dashboard mein Approve/Reject card aata hai.
+ */
+data class LinkRequest(
+    val id: String = "",
+    val studentEmail: String = "",
+    val parentEmail: String = "",
+    val studentName: String = "",
+    val status: String = "pending", // pending | approved | rejected
+    val createdAt: Long = 0L,
+    val familyId: String = ""
+)
