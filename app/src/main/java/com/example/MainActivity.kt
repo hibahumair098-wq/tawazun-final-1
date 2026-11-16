@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
@@ -19,14 +20,18 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,6 +45,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.data.model.UserRole
+import com.example.data.repository.LinkRequest
 import com.example.data.repository.TawazunRepository
 import com.example.ui.auth.AuthScreen
 import com.example.ui.parent.ParentDashboardScreen
@@ -54,6 +60,7 @@ import com.example.util.configureAppCheck
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val TAG = "MainActivity"
@@ -74,6 +81,8 @@ class MainActivity : ComponentActivity() {
                 val authError by repository.authError.collectAsState()
                 val authLoading by repository.authLoading.collectAsState()
                 val verifyNotice by repository.verifyNotice.collectAsState()
+                val subscription by repository.subscription.collectAsState()
+                val myRequest by repository.myRequest.collectAsState()
                 val context = LocalContext.current
                 val coroutineScope = rememberCoroutineScope()
                 val credentialManager = remember { CredentialManager.create(context) }
@@ -138,6 +147,10 @@ class MainActivity : ComponentActivity() {
                                 // ⏳ Student account ban gaya — parent ke add hone ka intezar
                                 WaitingForParentScreen(
                                     email = current.email,
+                                    myRequest = myRequest,
+                                    onSendRequest = { parentEmail ->
+                                        repository.sendRequestToParent(parentEmail)
+                                    },
                                     onLogout = { repository.logout() },
                                     modifier = Modifier.padding(innerPadding)
                                 )
@@ -150,6 +163,13 @@ class MainActivity : ComponentActivity() {
                                         coroutineScope.launch { repository.refreshVerificationStatus() }
                                     },
                                     onResend = { repository.resendVerificationEmail() },
+                                    onLogout = { repository.logout() },
+                                    modifier = Modifier.padding(innerPadding)
+                                )
+                            } else if (current.role == UserRole.STUDENT && subscription.status == "TRIAL_EXPIRED") {
+                                // ⏰ Trial khatam — student lock (parent renew kare to khulega)
+                                TrialExpiredScreen(
+                                    email = current.email,
                                     onLogout = { repository.logout() },
                                     modifier = Modifier.padding(innerPadding)
                                 )
@@ -198,6 +218,18 @@ fun EmailVerificationGateScreen(
     onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // ⏳ 60-second cooldown — Firebase ka "unusual activity" block parhne se bachne ke liye
+    var cooldownUntil by remember { mutableStateOf(0L) }
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(cooldownUntil) {
+        while (System.currentTimeMillis() < cooldownUntil) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+        nowMs = System.currentTimeMillis()
+    }
+    val secondsLeft = ((cooldownUntil - nowMs) / 1000L).coerceAtLeast(0)
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -248,10 +280,17 @@ fun EmailVerificationGateScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
-                    onClick = onResend,
+                    onClick = {
+                        onResend()
+                        cooldownUntil = System.currentTimeMillis() + 60_000L
+                    },
+                    enabled = secondsLeft <= 0,
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("📧 Email Dobara Bhejo (Resend)", fontSize = 13.sp)
+                    Text(
+                        if (secondsLeft > 0) "⏳ ${secondsLeft}s mein dobara..." else "📧 Email Dobara Bhejo (Resend)",
+                        fontSize = 13.sp
+                    )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 TextButton(onClick = onLogout) {
@@ -270,6 +309,8 @@ fun EmailVerificationGateScreen(
 @Composable
 fun WaitingForParentScreen(
     email: String,
+    myRequest: LinkRequest?,
+    onSendRequest: (String) -> Unit,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -318,6 +359,104 @@ fun WaitingForParentScreen(
                     color = TawazunTextSecondary,
                     textAlign = TextAlign.Center,
                     lineHeight = 17.sp
+                )
+
+                // 📨 YA — student khud parent ko request bhej sake
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "— YA —",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunTextSecondary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (myRequest != null && myRequest.status == "pending") {
+                    Text(
+                        text = "✓ Request bheji gayi: ${myRequest.parentEmail}\nParent ke Tawazun app mein Approve karte hi ye screen khud badal jayegi. 📨",
+                        fontSize = 12.sp,
+                        color = TawazunEmeraldPrimary,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 17.sp
+                    )
+                } else {
+                    if (myRequest != null && myRequest.status == "rejected") {
+                        Text(
+                            text = "✗ Parent ne ye request mana kar di thi. Naya parent email try karein ya parent se seedha add karwayein.",
+                            fontSize = 12.sp,
+                            color = TawazunErrorRed,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 17.sp
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                    var parentEmail by remember(myRequest?.id) { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = parentEmail,
+                        onValueChange = { parentEmail = it },
+                        label = { Text("Parent ka email (jaise abc@gmail.com)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = { onSendRequest(parentEmail) },
+                        enabled = parentEmail.contains("@"),
+                        colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("📨 Parent Ko Request Bhejo", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+                TextButton(onClick = onLogout) {
+                    Text("Log Out", fontSize = 12.sp, color = TawazunTextSecondary)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * ⏰ TrialExpiredScreen — 3-din free trial khatam hone par STUDENT ka lock.
+ * Parent renew kare (₨299/month — Coming Soon, ya demo extend) to ye lock khud khatam ho jata hai.
+ */
+@Composable
+fun TrialExpiredScreen(
+    email: String,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("⏰", fontSize = 48.sp)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Free Trial Khatam Ho Gayi",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunErrorRed
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Tawazun ka 3-din free trial mukammal ho gaya hai ($email).\n\nParent se kahin ke apni Tawazun app ke Billing tab mein renewal karein — ₨299/month.\nRenew hote hi ye app khud khul jayegi. ✨",
+                    fontSize = 13.sp,
+                    color = TawazunTextSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 19.sp
                 )
                 Spacer(modifier = Modifier.height(20.dp))
                 TextButton(onClick = onLogout) {
