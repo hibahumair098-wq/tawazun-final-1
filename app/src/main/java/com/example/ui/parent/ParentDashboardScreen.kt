@@ -91,6 +91,7 @@ import com.example.data.model.AppCategory
 import com.example.data.model.AppPolicy
 import com.example.data.model.Child
 import com.example.data.model.HomeworkTask
+import com.example.data.repository.LinkRequest
 import com.example.data.repository.TawazunRepository
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
@@ -127,9 +128,12 @@ fun ParentDashboardScreen(
     val screenSnaps by repository.screenSnaps.collectAsState()
     val auditLogs by repository.auditLogs.collectAsState()
     val subscription by repository.subscription.collectAsState()
+    val linkRequests by repository.linkRequests.collectAsState()
     val childrenLoading by repository.childrenLoading.collectAsState()
 
     var showAddChildDialog by remember { mutableStateOf(false) }
+    var approvingRequest by remember { mutableStateOf<LinkRequest?>(null) }
+    var showChildLimitDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // Family mein abhi koi bacha nahi — "pehla bacha add karein" ka screen
@@ -255,7 +259,10 @@ fun ParentDashboardScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showAddChildDialog = true }) {
+                    IconButton(onClick = {
+                        // 🎁 1-bacha limit (trial/₨299 single plan)
+                        if (children.isNotEmpty()) showChildLimitDialog = true else showAddChildDialog = true
+                    }) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Add Child",
@@ -388,6 +395,82 @@ fun ParentDashboardScreen(
                 }
             }
 
+            // 📨 Student link requests (student ne parent ka email dala tha)
+            linkRequests.forEach { req ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📨", fontSize = 20.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    "${req.studentName} — Approval Request",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = TawazunTextPrimary
+                                )
+                                Text(
+                                    "Student email: ${req.studentEmail}",
+                                    fontSize = 11.sp,
+                                    color = TawazunTextSecondary
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { approvingRequest = req },
+                                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("✅ Approve", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = { repository.rejectRequest(req.id) },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TawazunErrorRed),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("✗ Reject", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ⏰ Trial khatam — parent ko turant batado (bachay ka app lock hai)
+            if (subscription.status == "TRIAL_EXPIRED") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = TawazunErrorRed.copy(alpha = 0.12f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            "⏰ Free Trial khatam ho gayi hai!",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = TawazunErrorRed
+                        )
+                        Text(
+                            "Bachay ka Tawazun app ab locked hai. Billing tab mein jaa kar renew karein (₨299/month) ya demo extend karein.",
+                            fontSize = 11.sp,
+                            color = TawazunTextSecondary,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+            }
+
             // 3-Day Privacy Notice (Prominently mandated by prompt)
             Card(
                 modifier = Modifier
@@ -466,7 +549,8 @@ fun ParentDashboardScreen(
                     onSelectChild = { repository.setSelectedChild(it) }
                 )
                 5 -> BillingTab(
-                    subscription = subscription
+                    subscription = subscription,
+                    onExtendDemo = { repository.extendDemoTrial(7) }
                 )
                 6 -> AuditTab(
                     auditLogs = auditLogs
@@ -481,6 +565,35 @@ fun ParentDashboardScreen(
             onConfirm = { name, grade, email, device, emoji ->
                 scope.launch { repository.addChild(name, grade, email, device, emoji) }
                 showAddChildDialog = false
+            }
+        )
+    }
+
+    // 🎁 1-bacha limit ka dialog
+    if (showChildLimitDialog) {
+        AlertDialog(
+            onDismissRequest = { showChildLimitDialog = false },
+            title = { Text("1 Bacha Ki Limit", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Free Trial mein sirf 1 bacha ka account hota hai. ₨299/month subscription mein bhi 1 account — " +
+                        "mazeed bachon ke liye nayi plans Coming Soon hain! 💫"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showChildLimitDialog = false }) { Text("Theek hai") }
+            }
+        )
+    }
+
+    // 📨 Request approve — bachay ki details confirm karo
+    approvingRequest?.let { req ->
+        ApproveRequestDialog(
+            request = req,
+            onDismiss = { approvingRequest = null },
+            onConfirm = { name, grade, device, emoji ->
+                repository.approveRequest(req, name, grade, device, emoji)
+                approvingRequest = null
             }
         )
     }
@@ -1566,8 +1679,20 @@ fun ChildrenTab(
 
 @Composable
 fun BillingTab(
-    subscription: com.example.data.model.SubscriptionInfo
+    subscription: com.example.data.model.SubscriptionInfo,
+    onExtendDemo: () -> Unit
 ) {
+    val expired = subscription.status == "TRIAL_EXPIRED"
+    val statusLabel = when (subscription.status) {
+        "ACTIVE_TRIAL" -> "🎁 FREE TRIAL"
+        "ACTIVE_SUBSCRIPTION" -> "✅ SUBSCRIBED"
+        else -> "⏰ TRIAL KHATAM"
+    }
+    val statusColor = when (subscription.status) {
+        "ACTIVE_TRIAL" -> TawazunEmeraldPrimary
+        "ACTIVE_SUBSCRIPTION" -> TawazunGold
+        else -> TawazunErrorRed
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1594,10 +1719,10 @@ fun BillingTab(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(TawazunEmeraldDark)
+                            .background(statusColor)
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text(subscription.status, fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(statusLabel, fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -1609,10 +1734,57 @@ fun BillingTab(
                     color = TawazunGold
                 )
                 Text(
-                    "7-Day Free Trial (5 days remaining) • 3-Day Grace Period",
+                    if (expired) "Free trial khatam — bachay ka app locked hai ⏰"
+                    else "3-Day Free Trial • ${subscription.trialDaysRemaining} din baqi • 1 Bacha",
                     fontSize = 12.sp,
                     color = TawazunTextSecondary
                 )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (expired) {
+                    Text(
+                        "⏰ Aap ki 3-din free trial mukammal ho gayi hai. Bachay ka Tawazun app ab locked hai — renew karte hi khul jayegi.",
+                        fontSize = 12.sp,
+                        color = TawazunErrorRed,
+                        lineHeight = 17.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { },
+                        enabled = false,
+                        colors = ButtonDefaults.buttonColors(containerColor = TawazunGold),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("💎 Renew — ₨299/month (Coming Soon)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = onExtendDemo,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🎁 Demo: 7 Din Aur Free Extend Karein", fontSize = 12.sp)
+                    }
+                } else {
+                    Text(
+                        "Trial ke baad ₨299/month ki subscription lagegi (1 bacha). Hum trial khatam hone se pehle aap ko bata denge. 💚",
+                        fontSize = 12.sp,
+                        color = TawazunTextSecondary,
+                        lineHeight = 17.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { },
+                        enabled = false,
+                        colors = ButtonDefaults.buttonColors(containerColor = TawazunGold),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("💎 Abhi Subscribe Karein — ₨299 (Coming Soon)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -1822,6 +1994,88 @@ fun AddHomeworkDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
             ) {
                 Text("Add Karein")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/**
+ * 📨 ApproveRequestDialog — student ki request approve karne ke liye bachay ki
+ * details confirm karo (email pehle se pata hai — student ne bheji hai).
+ */
+@Composable
+fun ApproveRequestDialog(
+    request: LinkRequest,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, grade: String, deviceModel: String, avatarEmoji: String) -> Unit
+) {
+    var name by remember { mutableStateOf(request.studentName) }
+    var grade by remember { mutableStateOf("") }
+    var device by remember { mutableStateOf("") }
+    var emoji by remember { mutableStateOf("👧") }
+    val emojiChoices = listOf("👦", "👧", "🧒", "🧑")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Request Approve Karein", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Student: ${request.studentName}\nEmail: ${request.studentEmail}",
+                    fontSize = 12.sp,
+                    color = TawazunTextSecondary
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Bachay ka naam") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = grade,
+                    onValueChange = { grade = it },
+                    label = { Text("Class (e.g. Grade 9)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = device,
+                    onValueChange = { device = it },
+                    label = { Text("Phone model (optional)") },
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    emojiChoices.forEach { choice ->
+                        FilterChip(
+                            selected = emoji == choice,
+                            onClick = { emoji = choice },
+                            label = { Text(choice, fontSize = 20.sp) }
+                        )
+                    }
+                }
+                Text(
+                    "Approve karte hi bacha is email se apne phone par login kar sakta hai aur app khud link ho jayegi. 3-din free trial shuru ho jayegi.",
+                    fontSize = 11.sp,
+                    color = TawazunTextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(
+                        name.trim(),
+                        grade.trim(),
+                        device.trim().ifBlank { "Not paired yet" },
+                        emoji
+                    )
+                },
+                enabled = name.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
+            ) {
+                Text("✅ Approve Karein")
             }
         },
         dismissButton = {
