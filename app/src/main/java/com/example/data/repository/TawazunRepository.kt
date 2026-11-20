@@ -32,7 +32,10 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,6 +66,8 @@ class TawazunRepository(private val appContext: Context? = null) {
     private var subscriptionListener: ListenerRegistration? = null
     private var linkRequestsListener: ListenerRegistration? = null
     private var myRequestListener: ListenerRegistration? = null
+    private var guardLoopJob: Job? = null
+    private val guardScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Current Session (null = logged out)
     private val _currentSession = MutableStateFlow<UserSession?>(null)
@@ -720,6 +725,9 @@ class TawazunRepository(private val appContext: Context? = null) {
         linkRequestsListener = null
         myRequestListener?.remove()
         myRequestListener = null
+        // ⏰ Bedtime clock bhi band
+        guardLoopJob?.cancel()
+        guardLoopJob = null
         trialEnsureAttempted = false
         _children.value = emptyList()
         _selectedChildId.value = ""
@@ -782,6 +790,22 @@ class TawazunRepository(private val appContext: Context? = null) {
         _currentSession.value?.let { s ->
             if (s.role == UserRole.PARENT && s.email.isNotBlank()) {
                 attachLinkRequestsListener(s.email)
+            }
+        }
+        // ⏰ Student ho to BEDTIME CLOCK chalao — har minute guard refresh
+        // (ghari ke hisab se apne aap block/unblock, koi data-change nahi chahiye)
+        if (_currentSession.value?.role == UserRole.STUDENT) {
+            startGuardLoop()
+        }
+    }
+
+    /** ⏰ BEDTIME CLOCK — har minute guard ko refresh karo. */
+    private fun startGuardLoop() {
+        guardLoopJob?.cancel()
+        guardLoopJob = guardScope.launch {
+            while (isActive) {
+                refreshGuardState()
+                delay(60_000L)
             }
         }
     }
@@ -889,7 +913,8 @@ class TawazunRepository(private val appContext: Context? = null) {
             val isFun = p.category == AppCategory.ENTERTAINMENT || p.category == AppCategory.GAMING
             val lockedByHomework = isFun && !child.homeworkUnlocked
             val lockedByTimer = p.isBlockedByTimer
-            val bedtimeNow = isFun && isBedtimeActive(child)
+            // 🌙 BEDTIME v2: raat ke waqt SAB non-educational apps band (sirf fun nahi)
+            val bedtimeNow = isBedtimeActive(child) && p.category != AppCategory.EDUCATION
             if (lockedByHomework || lockedByTimer || bedtimeNow) {
                 blockedKeys.add(p.appKey)
             }
@@ -908,6 +933,12 @@ class TawazunRepository(private val appContext: Context? = null) {
         if (session.familyId.isNotBlank() && session.isEmailVerified &&
             _allowedWebsites.value.isNotEmpty()
         ) {
+            blockedPackages.addAll(UsageTracker.BROWSER_PACKAGES)
+        }
+
+        // 🌙 BEDTIME: raat ke waqt browsers bhi band — bacha so jaye!
+        // (verify se pehle nahi — verification link ka rasta khula rahe)
+        if (isBedtimeActive(child) && session.isEmailVerified) {
             blockedPackages.addAll(UsageTracker.BROWSER_PACKAGES)
         }
 
@@ -1013,7 +1044,11 @@ class TawazunRepository(private val appContext: Context? = null) {
                 if (error != null || snapshot == null) return@addSnapshotListener
                 val pairs = snapshot.documents.mapNotNull { doc ->
                     val policy = doc.toPolicy()
-                    if (policy != null) (doc.getString("childId") ?: "") to policy else null
+                    // 💬 WhatsApp ka limit/block card hata diya gaya (user request) —
+                    // usage tracking phir bhi chalti rahegi, bas blocking nahi
+                    if (policy != null && policy.appKey != "whatsapp") {
+                        (doc.getString("childId") ?: "") to policy
+                    } else null
                 }
                 _policies.value = pairs.groupBy({ it.first }, { it.second })
                 // 🛡️ Guard update (limits badal sakti hain)
@@ -1093,7 +1128,6 @@ class TawazunRepository(private val appContext: Context? = null) {
 
     /** Naye bachay ke liye shuruaati app limits. */
     private fun starterPolicies(): List<AppPolicy> = listOf(
-        AppPolicy("whatsapp", "WhatsApp (School & Family)", AppCategory.COMMUNICATION, "💬", dailyLimitMin = 60, usedTodayMin = 0, groupName = "Chat Apps"),
         AppPolicy("khan_academy", "Khan Academy Urdu", AppCategory.EDUCATION, "📚", dailyLimitMin = 180, usedTodayMin = 0),
         AppPolicy("youtube", "YouTube", AppCategory.ENTERTAINMENT, "▶️", dailyLimitMin = 45, usedTodayMin = 0, groupName = "Social & Gaming"),
         AppPolicy("tiktok", "TikTok", AppCategory.ENTERTAINMENT, "🎵", dailyLimitMin = 0, usedTodayMin = 0, groupName = "Social & Gaming")
