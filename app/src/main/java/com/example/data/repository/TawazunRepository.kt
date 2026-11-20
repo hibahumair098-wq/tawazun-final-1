@@ -685,6 +685,10 @@ class TawazunRepository(private val appContext: Context? = null) {
 
     fun logout() {
         val prevSession = _currentSession.value
+        // 🛡️ Guard cache clear — warna purane session ki blocked apps
+        // (jaise Browser Shield ka Chrome) naye account ke verification link
+        // ko bhi block kar sakti hain!
+        GuardState.update(appContext, emptySet())
         // 🪞 Screen snap service bhi band
         if (ScreenSnapService.isRunning) {
             appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
