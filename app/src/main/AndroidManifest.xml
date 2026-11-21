@@ -3,12 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Android 13+ mein notifications dikhane ke liye (screen record/snap ki visible notices) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Asli app usage parhne ke liye (user khud Settings se deta hai) -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
-    <!-- Screen capture must be explicitly approved by the device user. -->
+    <!-- 🪞 Screen Snap (MediaProjection foreground service) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
@@ -45,11 +46,12 @@
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Tawazun Guard: AccessibilityService -->
+        <!-- 🛡️ Tawazun Guard: asli app blocking (AccessibilityService) -->
         <service
             android:name=".service.TawazunGuardService"
             android:exported="false"
@@ -63,14 +65,17 @@
                 android:resource="@xml/tawazun_guard_config" />
         </service>
 
-        <!-- Screen capture runs only after MediaProjection's system consent prompt. -->
+        <!-- 🪞 Tawazun Screen Snap: live snapshot (MediaProjection) -->
         <service
             android:name=".service.ScreenSnapService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 🎞️ Tawazun Screen Record: poori video (MediaProjection) -->
         <service
             android:name=".service.ScreenRecordService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>
+
 </manifest>
