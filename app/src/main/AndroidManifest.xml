@@ -3,11 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Asli app usage parhne ke liye (user khud Settings se deta hai) -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
-    <!-- 🪞 Screen Snap (MediaProjection foreground service) -->
+    <!-- Screen capture must be explicitly approved by the device user. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
@@ -44,12 +45,11 @@
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- 🛡️ Tawazun Guard: asli app blocking (AccessibilityService) -->
+        <!-- Tawazun Guard: AccessibilityService -->
         <service
             android:name=".service.TawazunGuardService"
             android:exported="false"
@@ -63,17 +63,14 @@
                 android:resource="@xml/tawazun_guard_config" />
         </service>
 
-        <!-- 🪞 Tawazun Screen Snap: live snapshot (MediaProjection) -->
+        <!-- Screen capture runs only after MediaProjection's system consent prompt. -->
         <service
             android:name=".service.ScreenSnapService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
-
-        <!-- 🎞️ Tawazun Screen Record: poori video (MediaProjection) -->
         <service
             android:name=".service.ScreenRecordService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>
-
 </manifest>
