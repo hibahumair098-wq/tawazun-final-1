@@ -16,6 +16,7 @@ import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.BaseBundle
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -26,10 +27,16 @@ import com.google.firebase.firestore.FirebaseFirestore
 import java.io.ByteArrayOutputStream
 
 /**
- * Captures a transparent, consented screen snapshot every 30 seconds.
- * Android's MediaProjection consent must be obtained by the activity for every
- * capture session. A persistent foreground notification provides an immediate
- * Stop action while capture is active.
+ * 🪞 TAWAZUN SCREEN SNAP — bachay ke screen ka LIVE snapshot (har 30 second).
+ *
+ * MediaProjection se screen parhta hai, chhoti JPEG banata hai, aur Firestore
+ * mein "families/{fid}/screenSnaps/{childId}" doc par likhta hai — parent ka
+ * Mirror tab wahan se LIVE photo dikhata hai.
+ *
+ * FREE tareeqa: Cloud Storage skip kiya (wo card/Blaze maangta hai) —
+ * chhoti compressed image Firestore ke free Spark plan mein hi chale jaati hai.
+ *
+ * Transparency: capture ke pooray waqt phone par notification chalti rehti hai.
  */
 class ScreenSnapService : Service() {
 
@@ -41,8 +48,8 @@ class ScreenSnapService : Service() {
         const val ACTION_STOP = "com.tawazun.pksafe.ACTION_STOP_SNAP"
         private const val CHANNEL_ID = "tawazun_screen_snap"
         private const val NOTIF_ID = 4210
-        private const val INTERVAL_MS = 30_000L
-        private const val MAX_WIDTH = 540
+        private const val INTERVAL_MS = 30_000L // har 30 second ek snapshot
+        private const val MAX_WIDTH = 540 // chhota rakhte hain (Firestore 1MB limit + tez load)
 
         @Volatile
         var isRunning: Boolean = false
@@ -59,77 +66,56 @@ class ScreenSnapService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Notification ka Stop button
         if (intent?.action == ACTION_STOP) {
             stopSnap()
             return START_NOT_STICKY
         }
-        // Android 14+ requires a new projection consent token for each session.
-        // Never attempt to create another projection from an already-used token.
-        if (running || projection != null) return START_NOT_STICKY
 
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-            ?: Activity.RESULT_CANCELED
+            ?: return START_NOT_STICKY
         val data = if (Build.VERSION.SDK_INT >= 33) {
-            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+            intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
-            intent?.getParcelableExtra(EXTRA_RESULT_DATA)
-        }
-        val familyId = intent?.getStringExtra(EXTRA_FAMILY_ID)
-        val childId = intent?.getStringExtra(EXTRA_CHILD_ID)
-        if (resultCode != Activity.RESULT_OK || data == null || familyId.isNullOrBlank() || childId.isNullOrBlank()) {
-            stopSelf(startId)
-            return START_NOT_STICKY
+            intent.getParcelableExtra(EXTRA_RESULT_DATA)
+        } ?: return START_NOT_STICKY
+        val familyId = intent.getStringExtra(EXTRA_FAMILY_ID) ?: return START_NOT_STICKY
+        val childId = intent.getStringExtra(EXTRA_CHILD_ID) ?: return START_NOT_STICKY
+
+        // Foreground notification (Android rule + transparency)
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
         }
 
-        try {
-            // Promote before calling getMediaProjection; required for Android 14+.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIF_ID,
-                    buildNotification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                )
-            } else {
-                startForeground(NOTIF_ID, buildNotification())
+        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        projection = mpm.getMediaProjection(resultCode, data)
+        projection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                stopSnap()
             }
+        }, null)
 
-            val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val newProjection = manager.getMediaProjection(resultCode, data)
-                ?: throw IllegalStateException("Android did not create a screen-capture session")
-            projection = newProjection
-            newProjection.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() {
-                    stopSnap()
-                }
-            }, Handler(Looper.getMainLooper()))
+        val metrics = resources.displayMetrics
+        val scale = (MAX_WIDTH.toFloat() / metrics.widthPixels).coerceAtMost(1f)
+        val w = ((metrics.widthPixels * scale).toInt() and 0xFFFE)
+        val h = ((metrics.heightPixels * scale).toInt() and 0xFFFE)
 
-            val metrics = resources.displayMetrics
-            val scale = (MAX_WIDTH.toFloat() / metrics.widthPixels).coerceAtMost(1f)
-            val width = ((metrics.widthPixels * scale).toInt() and 0xFFFE).coerceAtLeast(2)
-            val height = ((metrics.heightPixels * scale).toInt() and 0xFFFE).coerceAtLeast(2)
-            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            imageReader = reader
-            virtualDisplay = newProjection.createVirtualDisplay(
-                "tawazun_snap",
-                width,
-                height,
-                metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.surface,
-                null,
-                null
-            ) ?: throw IllegalStateException("Could not create screen capture display")
+        imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+        virtualDisplay = projection?.createVirtualDisplay(
+            "tawazun_snap",
+            w, h, metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader!!.surface,
+            null, null
+        )
 
-            handler = Handler(Looper.getMainLooper())
-            running = true
-            isRunning = true
-            handler?.postDelayed({ captureLoop(familyId, childId) }, 1_500L)
-        } catch (_: SecurityException) {
-            stopSnap()
-        } catch (_: Exception) {
-            stopSnap()
-        }
+        handler = Handler(Looper.getMainLooper())
+        running = true
+        isRunning = true
+        handler?.postDelayed({ captureLoop(familyId, childId) }, 1500L) // pehla snap jaldi
         return START_NOT_STICKY
     }
 
@@ -142,17 +128,17 @@ class ScreenSnapService : Service() {
     private fun captureAndUpload(familyId: String, childId: String) {
         val image = try {
             imageReader?.acquireLatestImage()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         } ?: return
 
         try {
             val bitmap = imageToBitmap(image)
-            val output = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 55, output)
-            bitmap.recycle()
-            val base64 = Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
-            // Firestore document size is limited; skip oversized frames.
+            val baos = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 55, baos)
+            val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+
+            // Firestore doc limit ~1MB — base64 ~1.33x hota hai, is liye guard
             if (base64.length < 900_000) {
                 db.collection("families").document(familyId)
                     .collection("screenSnaps").document(childId)
@@ -164,33 +150,33 @@ class ScreenSnapService : Service() {
                         )
                     )
             }
-        } catch (_: Exception) {
-            // Skip a failed frame; the next scheduled capture can retry.
+        } catch (e: Exception) {
+            // Koi frame skip — agli koshish 30 sec mein
         } finally {
             image.close()
         }
     }
 
+    /** ImageReader ke Image ko Bitmap mein badlo (row padding handle kar ke). */
     private fun imageToBitmap(image: Image): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
-        val padded = Bitmap.createBitmap(
+
+        val full = Bitmap.createBitmap(
             image.width + rowPadding / pixelStride,
             image.height,
             Bitmap.Config.ARGB_8888
         )
         buffer.rewind()
-        padded.copyPixelsFromBuffer(buffer)
-        val cropped = Bitmap.createBitmap(padded, 0, 0, image.width, image.height)
-        if (cropped !== padded) padded.recycle()
-        return cropped
+        full.copyPixelsFromBuffer(buffer)
+        return Bitmap.createBitmap(full, 0, 0, image.width, image.height)
     }
 
     private fun buildNotification(): Notification {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= 26) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Tawazun Screen Snap",
@@ -200,14 +186,13 @@ class ScreenSnapService : Service() {
                 .createNotificationChannel(channel)
         }
         val stopIntent = PendingIntent.getService(
-            this,
-            1,
+            this, 1,
             Intent(this, ScreenSnapService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Tawazun screen snapshot is active")
-            .setContentText("Screen snapshots are shared with the linked parent. Tap Stop to end capture.")
+            .setContentTitle("🪞 Tawazun Screen Snap chal raha hai")
+            .setContentText("Parent aap ki screen ka live snapshot dekh sakte hain (3-Day Privacy Vault).")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .addAction(0, "Stop", stopIntent)
@@ -217,16 +202,12 @@ class ScreenSnapService : Service() {
     private fun stopSnap() {
         running = false
         isRunning = false
-        handler?.removeCallbacksAndMessages(null)
-        handler = null
-        try { virtualDisplay?.setSurface(null) } catch (_: Exception) { }
         virtualDisplay?.release()
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
-        val activeProjection = projection
+        projection?.stop()
         projection = null
-        try { activeProjection?.stop() } catch (_: Exception) { }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
