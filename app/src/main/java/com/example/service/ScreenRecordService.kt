@@ -27,34 +27,18 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * Ek saved recording ki jankari (student screen ki "My Recordings" list ke liye).
- */
 data class RecItem(
     val uri: Uri,
     val label: String,
-    val location: String, // "App" ya "Gallery"
+    val location: String,
     val sizeMb: String,
     val dateLabel: String,
     val dateMs: Long
 )
 
 /**
- * 🎞️ TAWAZUN SCREEN RECORD — bachay ki poori screen ki PROPER VIDEO (mp4).
- *
- * MediaProjection se screen ko MediaRecorder par likhte hain — jo SECOND nahi
- * chhoota, poori video proper format mein save hoti hai:
- *
- *   • Gallery mode  → Phone ki Gallery → Movies → Tawazun (parent khud choose karta hai)
- *   • App mode      → App ke private folder (Gallery se chhupi hui)
- *
- * FREE plan-friendly: video cloud par NAHI jati (3 ghante ki video = 100s of MB) —
- * bachay ke phone par hi rehti hai, parent phone lekar dekh sakta hai.
- *
- * Chhoti files: har 400 MB par nayi file (segment) — purane phone par 1-2 sec ka
- * gap, naye phone par (API 26+) bilkul seamless switch.
- *
- * Transparency: recording ke pooray waqt phone par notification chalti rehti hai.
+ * Screen recording is started only with a fresh MediaProjection consent result.
+ * The foreground notification remains visible with an immediate Stop action.
  */
 class ScreenRecordService : Service() {
 
@@ -66,73 +50,57 @@ class ScreenRecordService : Service() {
         const val ACTION_STOP = "com.tawazun.pksafe.ACTION_STOP_RECORD"
         private const val CHANNEL_ID = "tawazun_screen_record"
         private const val NOTIF_ID = 4211
-        private const val MAX_WIDTH = 540 // 540p — size aur quality ka balance
-        private const val BIT_RATE = 1_200_000 // ~540 MB/hour
+        private const val MAX_WIDTH = 540
+        private const val BIT_RATE = 1_200_000
         private const val FRAME_RATE = 24
-        private const val MAX_FILE_BYTES = 400L * 1024 * 1024 // har segment max 400 MB
+        private const val MAX_FILE_BYTES = 400L * 1024 * 1024
 
         @Volatile
         var isRunning: Boolean = false
             private set
 
-        /** App folder + Gallery (Movies/Tawazun) — dono ki videos ki list. */
         fun listRecordings(context: Context): List<RecItem> {
             val items = mutableListOf<RecItem>()
-            // App ke private folder
             try {
                 val dir = File(context.filesDir, "recordings")
-                dir.listFiles()?.filter { it.extension.equals("mp4", true) }?.forEach { f ->
+                dir.listFiles()?.filter { it.extension.equals("mp4", true) }?.forEach { file ->
                     items += RecItem(
-                        uri = Uri.fromFile(f),
-                        label = f.name,
+                        uri = Uri.fromFile(file),
+                        label = file.name,
                         location = "App",
-                        sizeMb = String.format(Locale.US, "%.1f MB", f.length() / 1024.0 / 1024.0),
-                        dateLabel = SimpleDateFormat("dd MMM HH:mm", Locale.getDefault())
-                            .format(Date(f.lastModified())),
-                        dateMs = f.lastModified()
+                        sizeMb = String.format(Locale.US, "%.1f MB", file.length() / 1024.0 / 1024.0),
+                        dateLabel = SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(file.lastModified())),
+                        dateMs = file.lastModified()
                     )
                 }
-            } catch (_: Exception) {
-            }
-            // Gallery → Movies → Tawazun (API 29+)
+            } catch (_: Exception) { }
             if (Build.VERSION.SDK_INT >= 29) {
                 try {
                     context.contentResolver.query(
                         MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                        arrayOf(
-                            MediaStore.Video.Media._ID,
-                            MediaStore.Video.Media.DISPLAY_NAME,
-                            MediaStore.Video.Media.SIZE,
-                            MediaStore.Video.Media.DATE_MODIFIED
-                        ),
+                        arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME,
+                            MediaStore.Video.Media.SIZE, MediaStore.Video.Media.DATE_MODIFIED),
                         "${MediaStore.Video.Media.RELATIVE_PATH}=?",
                         arrayOf("${Environment.DIRECTORY_MOVIES}/Tawazun"),
                         "${MediaStore.Video.Media.DATE_MODIFIED} DESC"
-                    )?.use { c ->
-                        val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                        val nameIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                        val sizeIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
-                        val dateIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
-                        while (c.moveToNext()) {
-                            val id = c.getLong(idIdx)
-                            val dateSec = c.getLong(dateIdx)
+                    )?.use { cursor ->
+                        val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                        val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                        val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+                        val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
+                        while (cursor.moveToNext()) {
+                            val dateSeconds = cursor.getLong(dateIndex)
                             items += RecItem(
-                                uri = ContentUris.withAppendedId(
-                                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id
-                                ),
-                                label = c.getString(nameIdx) ?: "video",
+                                uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cursor.getLong(idIndex)),
+                                label = cursor.getString(nameIndex) ?: "video",
                                 location = "Gallery",
-                                sizeMb = String.format(
-                                    Locale.US, "%.1f MB", c.getLong(sizeIdx) / 1024.0 / 1024.0
-                                ),
-                                dateLabel = SimpleDateFormat("dd MMM HH:mm", Locale.getDefault())
-                                    .format(Date(dateSec * 1000)),
-                                dateMs = dateSec * 1000
+                                sizeMb = String.format(Locale.US, "%.1f MB", cursor.getLong(sizeIndex) / 1024.0 / 1024.0),
+                                dateLabel = SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(dateSeconds * 1000)),
+                                dateMs = dateSeconds * 1000
                             )
                         }
                     }
-                } catch (_: Exception) {
-                }
+                } catch (_: Exception) { }
             }
             return items.sortedByDescending { it.dateMs }
         }
@@ -146,13 +114,9 @@ class ScreenRecordService : Service() {
     private var height = 0
     private var segment = 0
     private var running = false
-
-    // Filhal jis file par likh rahe hain
     private var activeFile: File? = null
     private var activeUri: Uri? = null
     private var activePfd: ParcelFileDescriptor? = null
-
-    // Agli file (seamless switch — API 26+)
     private var nextFile: File? = null
     private var nextUri: Uri? = null
     private var nextPfd: ParcelFileDescriptor? = null
@@ -164,6 +128,8 @@ class ScreenRecordService : Service() {
             stopRecord()
             return START_NOT_STICKY
         }
+        // Do not attempt to reuse a MediaProjection token or start a second capture session.
+        if (running) return START_NOT_STICKY
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val resultData = if (Build.VERSION.SDK_INT >= 33) {
             intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
@@ -171,143 +137,136 @@ class ScreenRecordService : Service() {
             @Suppress("DEPRECATION")
             intent?.getParcelableExtra(EXTRA_RESULT_DATA)
         }
-        if (resultCode == 0 || resultData == null || running) {
-            stopSelf()
+        if (resultCode == 0 || resultData == null) {
+            stopSelf(startId)
             return START_NOT_STICKY
         }
-        // Gallery sirf Android 10+ par (us se purane par app folder fallback)
-        toGallery = intent?.getBooleanExtra(EXTRA_TO_GALLERY, false) == true && Build.VERSION.SDK_INT >= 29
-        running = true
-        isRunning = true
 
-        // Foreground notification (Android rule + transparency)
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(
-                NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
-        } else {
-            startForeground(NOTIF_ID, buildNotification())
-        }
-
-        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        projection = mpm.getMediaProjection(resultCode, resultData)
-        projection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                stopRecord()
+        toGallery = intent.getBooleanExtra(EXTRA_TO_GALLERY, false) && Build.VERSION.SDK_INT >= 29
+        try {
+            // Promote immediately, before obtaining/using MediaProjection (Android 14+ requirement).
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(NOTIF_ID, buildNotification())
             }
-        }, null)
+            val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = manager.getMediaProjection(resultCode, resultData)
+                ?: throw IllegalStateException("Android did not create a screen-capture session")
+            projection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() = stopRecord()
+            }, android.os.Handler(mainLooper))
 
-        val metrics = resources.displayMetrics
-        val scale = (MAX_WIDTH.toFloat() / metrics.widthPixels).coerceAtMost(1f)
-        width = ((metrics.widthPixels * scale).toInt() and 0xFFFE)
-        height = ((metrics.heightPixels * scale).toInt() and 0xFFFE)
-
-        if (!startSegment()) stopRecord()
+            val metrics = resources.displayMetrics
+            val scale = (MAX_WIDTH.toFloat() / metrics.widthPixels).coerceAtMost(1f)
+            width = ((metrics.widthPixels * scale).toInt() and 0xFFFE)
+            height = ((metrics.heightPixels * scale).toInt() and 0xFFFE)
+            running = true
+            isRunning = true
+            if (!startSegment()) stopRecord()
+        } catch (_: SecurityException) {
+            stopRecord()
+        } catch (_: Exception) {
+            stopRecord()
+        }
         return START_NOT_STICKY
     }
 
-    /** Nayi video segment shuru karo. */
-    private fun startSegment(): Boolean {
-        return try {
-            segment++
-            val mr = createRecorder()
-            if (toGallery) {
-                val uri = newGalleryUri() ?: return false
-                val pfd = contentResolver.openFileDescriptor(uri, "rw") ?: return false
-                activeUri = uri
-                activePfd = pfd
-                mr.setOutputFile(pfd.fileDescriptor)
-            } else {
-                val dir = File(filesDir, "recordings")
-                if (!dir.exists()) dir.mkdirs()
-                val f = File(dir, "Tawazun_${stamp()}_$segment.mp4")
-                activeFile = f
-                mr.setOutputFile(f.absolutePath)
-            }
-            mr.prepare()
-            mr.start()
-            recorder = mr
-            virtualDisplay?.release()
-            virtualDisplay = projection?.createVirtualDisplay(
-                "tawazun_record",
-                width, height, resources.displayMetrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                mr.surface,
-                null, null
-            )
-            updateNotification()
-            true
-        } catch (e: Exception) {
-            false
+    private fun startSegment(): Boolean = try {
+        segment++
+        val nextRecorder = createRecorder()
+        if (toGallery) {
+            val uri = newGalleryUri() ?: return false
+            val pfd = contentResolver.openFileDescriptor(uri, "rw") ?: return false
+            activeUri = uri
+            activePfd = pfd
+            nextRecorder.setOutputFile(pfd.fileDescriptor)
+        } else {
+            val dir = File(filesDir, "recordings")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "Tawazun_${stamp()}_$segment.mp4")
+            activeFile = file
+            nextRecorder.setOutputFile(file.absolutePath)
         }
+        nextRecorder.prepare()
+        nextRecorder.start()
+        recorder = nextRecorder
+
+        // Android 14 allows one VirtualDisplay per MediaProjection session. Reuse it
+        // when rotating recording segments and change only its output surface.
+        val existingDisplay = virtualDisplay
+        if (existingDisplay == null) {
+            virtualDisplay = projection?.createVirtualDisplay(
+                "tawazun_record", width, height, resources.displayMetrics.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, nextRecorder.surface, null, null
+            ) ?: throw IllegalStateException("Could not create screen recording display")
+        } else {
+            existingDisplay.setSurface(nextRecorder.surface)
+        }
+        updateNotification()
+        true
+    } catch (_: Exception) {
+        false
     }
 
     private fun createRecorder(): MediaRecorder {
         @Suppress("DEPRECATION")
-        val mr = MediaRecorder()
-        mr.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-        mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        mr.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-        mr.setVideoSize(width, height)
-        mr.setVideoEncodingBitRate(BIT_RATE)
-        mr.setVideoFrameRate(FRAME_RATE)
-        mr.setMaxFileSize(MAX_FILE_BYTES)
-        mr.setOnInfoListener { _, what, _ ->
+        val mediaRecorder = MediaRecorder()
+        mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+        mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+        mediaRecorder.setVideoSize(width, height)
+        mediaRecorder.setVideoEncodingBitRate(BIT_RATE)
+        mediaRecorder.setVideoFrameRate(FRAME_RATE)
+        mediaRecorder.setMaxFileSize(MAX_FILE_BYTES)
+        mediaRecorder.setOnInfoListener { _, what, _ ->
             when (what) {
                 MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_APPROACHING -> prepareNextOutput()
                 MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED -> rotateSegment()
             }
         }
-        return mr
+        return mediaRecorder
     }
 
-    /**
-     * File bharne wali hai — agli file pehle se tayyar kar do (API 26+ par
-     * bilkul seamless: ek second bhi nahi rukta).
-     */
     private fun prepareNextOutput() {
-        if (Build.VERSION.SDK_INT < 26) return // purane phone par fallback = rotate
+        if (Build.VERSION.SDK_INT < 26) return
         try {
-            val mr = recorder ?: return
+            val currentRecorder = recorder ?: return
             if (toGallery) {
                 if (nextUri != null) return
                 val uri = newGalleryUri() ?: return
                 val pfd = contentResolver.openFileDescriptor(uri, "rw") ?: return
                 nextUri = uri
                 nextPfd = pfd
-                mr.setNextOutputFile(pfd.fileDescriptor)
+                currentRecorder.setNextOutputFile(pfd.fileDescriptor)
             } else {
                 if (nextFile != null) return
                 val dir = File(filesDir, "recordings")
                 if (!dir.exists()) dir.mkdirs()
-                val f = File(dir, "Tawazun_${stamp()}_${segment + 1}.mp4")
-                nextFile = f
-                mr.setNextOutputFile(f)
+                val file = File(dir, "Tawazun_${stamp()}_${segment + 1}.mp4")
+                nextFile = file
+                currentRecorder.setNextOutputFile(file)
             }
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) { }
     }
 
-    /** Segment bhar gaya — agle par chalein. */
     private fun rotateSegment() {
         if (!running) return
         val switched = (toGallery && nextUri != null) || (!toGallery && nextFile != null)
         if (switched) {
-            // Recorder pehle se agle file par chala gaya — sirf bookkeeping
-            val nu = nextUri
-            val np = nextPfd
-            val nf = nextFile
+            val uri = nextUri
+            val pfd = nextPfd
+            val file = nextFile
             finalizeActive()
-            activeUri = nu
-            activePfd = np
-            activeFile = nf
+            activeUri = uri
+            activePfd = pfd
+            activeFile = file
             nextUri = null
             nextPfd = null
             nextFile = null
             segment++
             updateNotification()
         } else {
-            // Fallback (purane Android): restart ke sath nayi file
             try { recorder?.stop() } catch (_: Exception) { }
             try { recorder?.release() } catch (_: Exception) { }
             recorder = null
@@ -316,17 +275,11 @@ class ScreenRecordService : Service() {
         }
     }
 
-    /** Active file ko pakka karo (Gallery mein visible) aur handle band karo. */
     private fun finalizeActive() {
         activeUri?.let { uri ->
             try {
-                contentResolver.update(
-                    uri,
-                    ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) },
-                    null, null
-                )
-            } catch (_: Exception) {
-            }
+                contentResolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+            } catch (_: Exception) { }
         }
         try { activePfd?.close() } catch (_: Exception) { }
         activePfd = null
@@ -344,36 +297,23 @@ class ScreenRecordService : Service() {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-        } catch (e: Exception) {
-            null
-        }
+        } catch (_: Exception) { null }
     }
 
-    private fun stamp(): String =
-        SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    private fun stamp(): String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
     private fun buildNotification(): Notification {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Tawazun Screen Record",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "Tawazun Screen Record", NotificationManager.IMPORTANCE_LOW)
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
         val stopIntent = PendingIntent.getService(
-            this, 1,
-            Intent(this, ScreenRecordService::class.java).setAction(ACTION_STOP),
+            this, 1, Intent(this, ScreenRecordService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🎞️ Tawazun — Video Recording chal rahi hai")
-            .setContentText(
-                "Screen ki video record ho rahi hai — save: " +
-                    (if (toGallery) "Gallery → Movies → Tawazun" else "App folder") +
-                    " (segment $segment)"
-            )
+            .setContentTitle("Tawazun — screen recording is active")
+            .setContentText("Screen video is being saved to ${if (toGallery) "Movies/Tawazun" else "the app's private folder"}.")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .addAction(0, "Stop", stopIntent)
@@ -381,15 +321,13 @@ class ScreenRecordService : Service() {
     }
 
     private fun updateNotification() {
-        try {
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIF_ID, buildNotification())
-        } catch (_: Exception) {
-        }
+        try { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, buildNotification()) }
+        catch (_: Exception) { }
     }
 
     private fun stopRecord() {
-        if (!running) {
+        if (!running && projection == null) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
@@ -398,15 +336,13 @@ class ScreenRecordService : Service() {
         try { recorder?.stop() } catch (_: Exception) { }
         try { recorder?.release() } catch (_: Exception) { }
         recorder = null
+        try { virtualDisplay?.setSurface(null) } catch (_: Exception) { }
         virtualDisplay?.release()
         virtualDisplay = null
         try { projection?.stop() } catch (_: Exception) { }
         projection = null
         finalizeActive()
-        // Bani hui magar use na hui agli file — saaf karo
-        nextUri?.let { uri ->
-            try { contentResolver.delete(uri, null, null) } catch (_: Exception) { }
-        }
+        nextUri?.let { uri -> try { contentResolver.delete(uri, null, null) } catch (_: Exception) { } }
         try { nextPfd?.close() } catch (_: Exception) { }
         nextUri = null
         nextPfd = null
