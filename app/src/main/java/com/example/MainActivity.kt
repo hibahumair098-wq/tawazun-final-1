@@ -36,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -82,6 +84,7 @@ class MainActivity : ComponentActivity() {
                 val session by repository.currentSession.collectAsState()
                 val authError by repository.authError.collectAsState()
                 val authLoading by repository.authLoading.collectAsState()
+                val typingLocked by repository.typingLocked.collectAsState()
                 val verifyNotice by repository.verifyNotice.collectAsState()
                 val subscription by repository.subscription.collectAsState()
                 val context = LocalContext.current
@@ -166,6 +169,7 @@ class MainActivity : ComponentActivity() {
                                 ParentPinDialog(
                                     loading = authLoading,
                                     error = authError,
+                                    showKeyboardHelp = typingLocked,
                                     onDismiss = {
                                         showPinDialog = false
                                         repository.clearAuthError()
@@ -459,10 +463,12 @@ fun TrialExpiredScreen(
 fun ParentPinDialog(
     loading: Boolean,
     error: String?,
+    showKeyboardHelp: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
     var pin by remember { mutableStateOf("") }
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("🔒 Parent Password", fontWeight = FontWeight.Bold) },
@@ -483,6 +489,24 @@ fun ParentPinDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                // ⌨️ Typing Lock escape: null keyboard laga ho to parent yahan se
+                // system keyboard picker khol kar apna normal keyboard chun sake
+                if (showKeyboardHelp) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    TextButton(onClick = {
+                        try {
+                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                            imm.showInputMethodPicker()
+                        } catch (_: Exception) {
+                        }
+                    }) {
+                        Text(
+                            "⌨️ Keyboard nahi khul raha? Yahan dabayein",
+                            fontSize = 11.sp,
+                            color = TawazunTextSecondary
+                        )
+                    }
+                }
                 if (error != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
