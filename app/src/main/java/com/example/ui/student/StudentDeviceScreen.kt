@@ -190,6 +190,21 @@ fun StudentDeviceScreen(
         }
     }
 
+    // 🪞 PARENT NE MIRROR ON KIYA (dusre phone se) — is phone par consent khud mangwao.
+    // Android ka usool: screen capture ki ijazat har dafa user (is phone) se milti hai.
+    var consentAskedForMirror by remember { mutableStateOf(false) }
+    LaunchedEffect(currentChild.mirroringActive) {
+        if (currentChild.mirroringActive) {
+            if (!consentAskedForMirror && !ScreenSnapService.isRunning && !ScreenRecordService.isRunning) {
+                consentAskedForMirror = true
+                pendingVideo = currentChild.mirrorMode == "video"
+                captureLauncher.launch(projectionManager.createScreenCaptureIntent())
+            }
+        } else {
+            consentAskedForMirror = false
+        }
+    }
+
     val isBedtime = repository.isBedtimeActive(currentChild)
 
     Scaffold(
@@ -220,6 +235,7 @@ fun StudentDeviceScreen(
                         }
                     },
                     actions = {
+                        // 🔒 Child mode — Log Out NAHI, parent ka password!
                         Button(
                             onClick = onLogout,
                             colors = ButtonDefaults.buttonColors(containerColor = TawazunSurfaceVariant),
@@ -227,9 +243,9 @@ fun StudentDeviceScreen(
                                 .height(34.dp)
                                 .testTag("student_logout_button")
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, modifier = Modifier.size(14.dp), tint = TawazunTextSecondary)
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(14.dp), tint = TawazunGold)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Log Out", fontSize = 11.sp, color = TawazunTextPrimary)
+                            Text("🔒 Parent", fontSize = 11.sp, color = TawazunTextPrimary)
                         }
                     }
                 )
