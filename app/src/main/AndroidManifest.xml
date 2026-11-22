@@ -82,6 +82,20 @@
             android:name=".service.TawazunDnsVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="false" />
+
+        <!-- ⌨️ Tawazun Typing Lock: null keyboard IME — soft keyboard kabhi nahi dikhta -->
+        <service
+            android:name=".service.TawazunNullKeyboard"
+            android:exported="true"
+            android:label="Tawazun Keyboard 🔒"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
     </application>
 
 </manifest>
