@@ -1,6 +1,7 @@
 package com.example.ui.student
 
 import android.content.Intent
+import android.net.VpnService
 import android.provider.Settings
 import android.app.Activity
 import android.content.Context
@@ -96,12 +97,14 @@ import com.example.data.model.AppCategory
 import com.example.data.model.AppPolicy
 import com.example.data.model.Child
 import com.example.data.model.HomeworkTask
+import com.example.data.model.UserRole
 import com.example.data.repository.TawazunRepository
 import com.example.data.usage.UsageTracker
 import com.example.service.GuardState
 import com.example.service.RecItem
 import com.example.service.ScreenRecordService
 import com.example.service.ScreenSnapService
+import com.example.service.TawazunDnsVpnService
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunErrorRed
@@ -128,6 +131,7 @@ fun StudentDeviceScreen(
     val policiesMap by repository.policies.collectAsState()
     val homeworkTasks by repository.homeworkTasks.collectAsState()
     val allowedWebsites by repository.allowedWebsites.collectAsState()
+    val blockedDomains by repository.blockedDomains.collectAsState()
 
     val currentChild = children.find { it.id == selectedChildId } ?: children.first()
     val policies = policiesMap[currentChild.id] ?: emptyList()
@@ -202,6 +206,39 @@ fun StudentDeviceScreen(
             }
         } else {
             consentAskedForMirror = false
+        }
+    }
+
+    // 🌐 SAFE WEB VPN — system-wide website blocking (Chrome/apps sab mein!)
+    // Parent ne blocked domains set kiye + child mode on → VPN khud start
+    // (Android ek dafa permission mangta hai — phir yaad rehta hai)
+    var vpnListApplied by remember { mutableStateOf<List<String>?>(null) }
+    val startDnsVpn: (List<String>) -> Unit = { list ->
+        vpnListApplied = list
+        val vpnIntent = Intent(context, TawazunDnsVpnService::class.java)
+        vpnIntent.putStringArrayListExtra(TawazunDnsVpnService.EXTRA_BLOCKED, ArrayList(list))
+        context.startService(vpnIntent)
+    }
+    val vpnLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) startDnsVpn(blockedDomains)
+    }
+    LaunchedEffect(blockedDomains, session?.role) {
+        val s = session ?: return@LaunchedEffect
+        if (s.role == UserRole.STUDENT) {
+            if (blockedDomains.isNotEmpty()) {
+                if (!TawazunDnsVpnService.isRunning || vpnListApplied != blockedDomains) {
+                    val prepareIntent = VpnService.prepare(context)
+                    if (prepareIntent != null) {
+                        vpnLauncher.launch(prepareIntent)
+                    } else {
+                        startDnsVpn(blockedDomains)
+                    }
+                }
+            } else if (TawazunDnsVpnService.isRunning) {
+                context.stopService(Intent(context, TawazunDnsVpnService::class.java))
+            }
         }
     }
 
