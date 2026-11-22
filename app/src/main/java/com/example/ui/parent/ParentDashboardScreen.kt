@@ -121,6 +121,7 @@ fun ParentDashboardScreen(
     val policiesMap by repository.policies.collectAsState()
     val homeworkTasks by repository.homeworkTasks.collectAsState()
     val blockedDomains by repository.blockedDomains.collectAsState()
+    val typingLocked by repository.typingLocked.collectAsState()
     val usageEvents by repository.usageEvents.collectAsState()
     val webAttempts by repository.webAttempts.collectAsState()
     val allowedWebsites by repository.allowedWebsites.collectAsState()
@@ -570,12 +571,14 @@ fun ParentDashboardScreen(
                     child = currentChild,
                     policies = currentChildPolicies,
                     blockedDomains = blockedDomains,
+                    typingLocked = typingLocked,
                     allowedWebsites = allowedWebsites,
                     onUpdateLimit = { appKey, limit -> repository.updatePolicy(currentChild.id, appKey, limit) },
                     onAddDomain = { repository.addBlockedDomain(it) },
                     onRemoveDomain = { repository.removeBlockedDomain(it) },
                     onAddAllowed = { repository.addAllowedWebsite(it) },
-                    onRemoveAllowed = { repository.removeAllowedWebsite(it) }
+                    onRemoveAllowed = { repository.removeAllowedWebsite(it) },
+                    onSetTypingLock = { repository.setTypingLock(it) }
                 )
                 3 -> MirrorTab(
                     child = currentChild,
@@ -1102,12 +1105,14 @@ fun RulesTab(
     child: Child,
     policies: List<AppPolicy>,
     blockedDomains: List<String>,
+    typingLocked: Boolean,
     allowedWebsites: List<String>,
     onUpdateLimit: (String, Int) -> Unit,
     onAddDomain: (String) -> Unit,
     onRemoveDomain: (String) -> Unit,
     onAddAllowed: (String) -> Unit,
-    onRemoveAllowed: (String) -> Unit
+    onRemoveAllowed: (String) -> Unit,
+    onSetTypingLock: (Boolean) -> Unit
 ) {
     var newDomainText by remember { mutableStateOf("") }
     var newSiteText by remember { mutableStateOf("") }
@@ -1290,6 +1295,43 @@ fun RulesTab(
                         }
                     }
                 }
+            }
+        }
+
+        // ⌨️ Typing Lock Section — Null Keyboard (system-wide typing block)
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "⌨️ Typing Lock (Keyboard Band)",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = TawazunTextPrimary
+            )
+            Text(
+                text = "ON: child mode mein soft keyboard nahi khulta — Chrome/search/WhatsApp mein type nahi kar sakta. Parent apne password se wapas normal keyboard le sakta hai.",
+                fontSize = 11.sp,
+                color = TawazunTextSecondary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (typingLocked) "Lock ON — bachay ka keyboard band hai" else "Lock OFF — keyboard normal hai",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (typingLocked) TawazunErrorRed else TawazunTextSecondary,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = typingLocked,
+                    onCheckedChange = { onSetTypingLock(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = TawazunEmeraldPrimary
+                    )
+                )
             }
         }
 
