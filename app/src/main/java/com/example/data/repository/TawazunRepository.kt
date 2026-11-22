@@ -19,6 +19,7 @@ import com.example.service.GuardState
 import com.example.service.ScreenRecordService
 import com.example.service.ScreenSnapService
 import com.google.android.gms.tasks.Tasks
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
@@ -90,33 +91,25 @@ class TawazunRepository(private val appContext: Context? = null) {
             val user = firebaseAuth.currentUser
             if (user != null && _currentSession.value == null) {
                 val email = user.email ?: ""
+                val prefs = appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)
+                val childMode = prefs?.getBoolean("child_mode", false) ?: false
+                val childModeId = prefs?.getString("child_mode_id", "") ?: ""
                 scope.launch {
-                    // Email se role detect karo: ye bacha hai ya parent?
-                    val child = findChildByEmail(email)
-                    if (child != null) {
-                        _children.value = listOf(child)
+                    if (childMode && childModeId.isNotBlank()) {
+                        // 🧒 CHILD MODE restore — is phone par student interface wapas
                         _currentSession.value = UserSession(
                             email = email,
                             role = UserRole.STUDENT,
-                            familyId = child.familyId,
-                            childId = child.id,
+                            familyId = user.uid,
+                            childId = childModeId,
                             isEmailVerified = user.isEmailVerified,
                             consentAccepted = true
                         )
-                        _selectedChildId.value = child.id
-                        attachChildrenListener(child.familyId)
-                    } else if (getSavedRole() == UserRole.STUDENT) {
-                        // ⏳ Pending student — account hai, parent ne abhi add nahi kiya
-                        _currentSession.value = UserSession(
-                            email = email,
-                            role = UserRole.STUDENT,
-                            familyId = "",
-                            childId = null,
-                            isEmailVerified = user.isEmailVerified,
-                            consentAccepted = true
-                        )
-                        attachChildWaitListener(email)
+                        _selectedChildId.value = childModeId
+                        attachChildrenListener(user.uid)
+                        addAudit("CHILD_MODE_RESTORED", email, "App restarted in child mode.")
                     } else {
+                        // Parent session (normal)
                         _currentSession.value = UserSession(
                             email = email,
                             role = UserRole.PARENT,
@@ -142,16 +135,8 @@ class TawazunRepository(private val appContext: Context? = null) {
     private val _policies = MutableStateFlow<Map<String, List<AppPolicy>>>(emptyMap())
     val policies: StateFlow<Map<String, List<AppPolicy>>> = _policies.asStateFlow()
 
-    // Blocked Domains
-    private val _blockedDomains = MutableStateFlow<List<String>>(
-        listOf(
-            "*.youtube.com",
-            "*.tiktok.com",
-            "*.roblox.com",
-            "omegle.com",
-            "*.chatroulette.com"
-        )
-    )
+    // Blocked Domains (ab sirf parent ki asli list — demo khatam)
+    private val _blockedDomains = MutableStateFlow<List<String>>(emptyList())
     val blockedDomains: StateFlow<List<String>> = _blockedDomains.asStateFlow()
 
     // Homework tasks
@@ -175,48 +160,12 @@ class TawazunRepository(private val appContext: Context? = null) {
     private val _allowedWebsites = MutableStateFlow<List<String>>(emptyList())
     val allowedWebsites: StateFlow<List<String>> = _allowedWebsites.asStateFlow()
 
-    // Mirror Sessions
-    private val _mirrorSessions = MutableStateFlow<List<MirrorSession>>(
-        listOf(
-            MirrorSession(
-                id = "mirror_live_01",
-                childId = "child_zain",
-                startedAt = System.currentTimeMillis() - 12 * 60 * 1000,
-                frameCount = 78,
-                appsUsed = listOf("WhatsApp (Class Group)", "Chrome (Notes)"),
-                blockedCount = 1,
-                status = "ACTIVE"
-            )
-        )
-    )
+    // Mirror Sessions — sirf ASLI sessions (demo data khatam)
+    private val _mirrorSessions = MutableStateFlow<List<MirrorSession>>(emptyList())
     val mirrorSessions: StateFlow<List<MirrorSession>> = _mirrorSessions.asStateFlow()
 
-    // Audit Logs
-    private val _auditLogs = MutableStateFlow<List<AuditLog>>(
-        listOf(
-            AuditLog(
-                id = "log_init",
-                timestamp = System.currentTimeMillis() - 3600000 * 4,
-                action = "CONSENT_ACCEPTED",
-                performedBy = "parent.ahmed@gmail.com",
-                details = "Signed consent v1.2-PK for child Zain Ali. 3-day data retention policy confirmed."
-            ),
-            AuditLog(
-                id = "log_policy",
-                timestamp = System.currentTimeMillis() - 3600000 * 2,
-                action = "POLICY_UPDATE",
-                performedBy = "parent.ahmed@gmail.com",
-                details = "Updated TikTok dailyLimitMin to 0 min (Strict Block)."
-            ),
-            AuditLog(
-                id = "log_hw",
-                timestamp = System.currentTimeMillis() - 3600000,
-                action = "HOMEWORK_VERIFIED",
-                performedBy = "parent.ahmed@gmail.com",
-                details = "Verified Mathematics Ex 2.3 completed tasks."
-            )
-        )
-    )
+    // Audit Logs — sirf ASLI events (demo data khatam)
+    private val _auditLogs = MutableStateFlow<List<AuditLog>>(emptyList())
     val auditLogs: StateFlow<List<AuditLog>> = _auditLogs.asStateFlow()
 
     // Subscription
@@ -690,6 +639,9 @@ class TawazunRepository(private val appContext: Context? = null) {
 
     fun logout() {
         val prevSession = _currentSession.value
+        // 🧒 Child mode flag bhi reset (logout = sab kuch saaf)
+        appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)?.edit()
+            ?.putBoolean("child_mode", false)?.remove("child_mode_id")?.apply()
         // 🛡️ Guard cache clear — warna purane session ki blocked apps
         // (jaise Browser Shield ka Chrome) naye account ke verification link
         // ko bhi block kar sakti hain!
@@ -756,6 +708,80 @@ class TawazunRepository(private val appContext: Context? = null) {
             )
         }
         attachChildrenListener(uid)
+    }
+
+    // ==================== 🧒 CHILD MODE (One-Login Design) ====================
+
+    /**
+     * 🧒 Parent ke account se hi bachay ka mode — us phone par student
+     * interface khul jata hai (parent dashboard peeche). Guard/bedtime/mirror
+     * sab is phone par is bachay ke hisab se chalte hain.
+     */
+    fun enterChildMode(childId: String) {
+        val session = _currentSession.value ?: return
+        if (session.role != UserRole.PARENT) return
+        val child = _children.value.find { it.id == childId } ?: return
+        appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)?.edit()
+            ?.putBoolean("child_mode", true)
+            ?.putString("child_mode_id", childId)
+            ?.apply()
+        _currentSession.value = UserSession(
+            email = session.email,
+            role = UserRole.STUDENT,
+            familyId = session.familyId,
+            childId = childId,
+            isEmailVerified = session.isEmailVerified,
+            consentAccepted = true
+        )
+        _selectedChildId.value = childId
+        refreshGuardState()
+        startGuardLoop()
+        addAudit("CHILD_MODE_ON", session.email, "Child mode opened for ${child.name} — student interface active on this phone.")
+    }
+
+    /**
+     * 🔒 Child mode se wapas parent interface — SIRF parent ke sahi password par.
+     * (Bacha parent ka data delete/verify nahi kar sakta — password ke bina rasta nahi!)
+     */
+    suspend fun exitChildMode(password: String): Boolean {
+        val session = _currentSession.value ?: return false
+        val user = auth.currentUser ?: return false
+        _authLoading.value = true
+        return try {
+            val credential = EmailAuthProvider.getCredential(session.email, password)
+            withContext(Dispatchers.IO) {
+                Tasks.await(user.reauthenticate(credential))
+            }
+            appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)?.edit()
+                ?.putBoolean("child_mode", false)
+                ?.remove("child_mode_id")
+                ?.apply()
+            // Capture services band + guard clear
+            if (ScreenSnapService.isRunning) {
+                appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
+            }
+            if (ScreenRecordService.isRunning) {
+                appContext?.stopService(Intent(appContext, ScreenRecordService::class.java))
+            }
+            guardLoopJob?.cancel()
+            guardLoopJob = null
+            GuardState.update(appContext, emptySet())
+            _currentSession.value = UserSession(
+                email = session.email,
+                role = UserRole.PARENT,
+                familyId = session.familyId,
+                childId = null,
+                isEmailVerified = user.isEmailVerified,
+                consentAccepted = true
+            )
+            addAudit("CHILD_MODE_OFF", session.email, "Back to parent interface (password verified).")
+            true
+        } catch (e: Exception) {
+            _authError.value = "Password ghalat hai! Sirf parent ka sahi password chalega."
+            false
+        } finally {
+            _authLoading.value = false
+        }
     }
 
     /** Family ke bachon par LIVE listener — Firestore mein koi change ho to app khud update hota hai. */
@@ -1089,8 +1115,10 @@ class TawazunRepository(private val appContext: Context? = null) {
     fun addChild(name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String): Boolean {
         val parentUid = auth.currentUser?.uid ?: return false
         val cleanEmail = studentEmail.trim().lowercase(Locale.ROOT)
-        if (name.isBlank() || !cleanEmail.contains("@")) {
-            _authError.value = "Bachay ka naam aur sahi email zaroori hai."
+        // 💬 SIMPLE MODE: sirf naam zaroori — email ab optional hai
+        // (student accounts khatam — bacha parent ke account ke andar hai)
+        if (name.isBlank()) {
+            _authError.value = "Bachay ka naam zaroori hai."
             return false
         }
         // 🎁 1-bacha limit (Free Trial aur ₨299 single plan dono mein)
