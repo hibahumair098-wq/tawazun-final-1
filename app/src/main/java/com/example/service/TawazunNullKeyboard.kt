@@ -3,91 +3,212 @@ package com.example.service
 import android.content.Context
 import android.graphics.Color
 import android.inputmethodservice.InputMethodService
-import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.LinearLayout
 
 /**
- * ⌨️ TAWAZUN TYPING LOCK KEYBOARD — "Null Keyboard" (user ki khud ki research!)
+ * ⌨️ TAWAZUN KEYBOARD — Per-App No-Keyboard Lock + asli QWERTY
  *
- * Ye ek IME (input method) hai jo BACHAY KE PHONE ka soft keyboard hi nahi dikhata:
- *   - onCreateInputView() NULL return karta hai → jab ye keyboard selected ho,
- *     kisi bhi app mein text field par tap karne ka KOI ASAR NAHI (keyboard nahi khulta)
- *   - Chrome mein URL nahi likh sakta, search nahi kar sakta, WhatsApp mein type nahi kar sakta
+ * Parent Rules tab se choose karta hai ke KIS app mein keyboard band karna hai
+ * (e.g. WhatsApp — app khulti hai, par bacha type nahi kar sakta).
  *
- * Kab lock hota hai? SIRF jab (prefs "tawazun_auth"):
- *   - child_mode = true (bachay ka mode chal raha hai) AUR
- *   - typing_lock = true (parent ne Rules tab se lock ON kiya)
- * Parent mode mein lock kabhi nahi lagta — aur ek-tap button se normal keyboard wapas.
+ * Kaam kaise karta hai:
+ *   - Jab koi text field khulta hai, system humein batata hai kaunsi app hai
+ *     (onStartInput → EditorInfo.packageName)
+ *   - Agar wo app parent ki blocked list mein hai (aur child mode + lock ON hai)
+ *     → keyboard ka view KABHI nahi dikhta (null keyboard — tap ka koi asar nahi)
+ *   - Baqi har app (aur parent mode) mein → Tawazun ka apna asli QWERTY keyboard
  *
- * Escape (parent): ParentPinDialog mein "⌨️ Keyboard nahi khul raha?" button →
- * system keyboard picker → parent apna normal keyboard chun kar password likhta hai.
- * (Bacha ye kar bhi le to password ke bina child mode se bahar nahi ja sakta.)
+ * Prefs ("tawazun_auth" — TawazunRepository likhta hai):
+ *   child_mode + typing_lock + keyboard_blocked_apps (appKeys ka set)
  */
 class TawazunNullKeyboard : InputMethodService() {
 
     companion object {
-        // Wahi prefs file jo TawazunRepository use karta hai — dono ek hi app mein hain
         const val PREFS_NAME = "tawazun_auth"
         const val KEY_CHILD_MODE = "child_mode"
         const val KEY_TYPING_LOCK = "typing_lock"
-    }
+        const val KEY_BLOCKED_APPS = "keyboard_blocked_apps"
 
-    /** Lock sirf tab: child mode ON + parent ne typing lock ON kiya ho. */
-    private fun isLockedNow(): Boolean {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getBoolean(KEY_CHILD_MODE, false) &&
-                prefs.getBoolean(KEY_TYPING_LOCK, false)
-    }
-
-    /**
-     * 🔒 ASLI TRICK: view NULL → soft keyboard kabhi nahi banega/dikhega.
-     * (Hardware/physical keyboard chalta rehta hai — research ke mutabiq.)
-     */
-    override fun onCreateInputView(): View? {
-        if (isLockedNow()) return null
-
-        // 🔓 Lock OFF (parent mode): chhota bar — ek tap mein normal keyboard wapas
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.parseColor("#0F3D2E"))
-            gravity = Gravity.CENTER
-        }
-        val btn = Button(this).apply {
-            text = "⌨️ Wapas normal keyboard (Tawazun Lock off)"
-            isAllCaps = false
-            textSize = 13f
-            setOnClickListener { switchToNormalKeyboard() }
-        }
-        bar.addView(
-            btn,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        // Parent ke appKeys → asli Android package names
+        val APP_PACKAGES: Map<String, List<String>> = mapOf(
+            "whatsapp" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+            "youtube" to listOf("com.google.android.youtube", "com.google.android.apps.youtube.kids"),
+            "chrome" to listOf("com.android.chrome"),
+            "instagram" to listOf("com.instagram.android"),
+            "tiktok" to listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"),
+            "telegram" to listOf("org.telegram.messenger"),
+            "snapchat" to listOf("com.snapchat.android")
         )
-        return bar
     }
 
-    /** System poochta "keyboard dikhau?" — locked = NAHI (view hi nahi banega). */
-    override fun onEvaluateInputViewShown(): Boolean = !isLockedNow()
+    private var targetBlocked = false
+    private var shiftOn = false
+    private val letterKeys = mutableListOf<Button>()
+    private var lettersPage: LinearLayout? = null
+    private var symbolsPage: LinearLayout? = null
+
+    // ---------------- LOCK LOGIC ----------------
+
+    private fun isTargetAppBlocked(pkg: String?): Boolean {
+        if (pkg == null || pkg == packageName) return false // Tawazun khud kabhi blocked nahi
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (!(prefs.getBoolean(KEY_CHILD_MODE, false) && prefs.getBoolean(KEY_TYPING_LOCK, false))) return false
+        val blockedApps = prefs.getStringSet(KEY_BLOCKED_APPS, emptySet()) ?: emptySet()
+        if (blockedApps.isEmpty()) return false
+        return APP_PACKAGES.entries.any { (key, pkgs) -> pkg in pkgs && key in blockedApps }
+    }
+
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        targetBlocked = isTargetAppBlocked(attribute?.packageName)
+    }
+
+    /** Blocked app → keyboard ka view kabhi nahi dikhata. */
+    override fun onEvaluateInputViewShown(): Boolean = !targetBlocked
 
     override fun onStartInputView(editorInfo: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(editorInfo, restarting)
-        if (isLockedNow()) {
-            requestHideSelf(0) // extra safety — koi purani keyboard na dikhe
+        if (targetBlocked) requestHideSelf(0)
+    }
+
+    // ---------------- QWERTY KEYBOARD (allowed apps + parent mode) ----------------
+
+    override fun onCreateInputView(): View = buildKeyboard()
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun buildKeyboard(): View {
+        shiftOn = false
+        letterKeys.clear()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F3D2E"))
+            setPadding(dp(3), dp(5), dp(3), dp(6))
+        }
+        lettersPage = buildLettersPage()
+        symbolsPage = buildSymbolsPage().apply { visibility = View.GONE }
+        root.addView(lettersPage)
+        root.addView(symbolsPage)
+        return root
+    }
+
+    private fun row(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun keyBtn(label: String, weight: Float = 1f, onTap: (Button) -> Unit): Button {
+        val btn = Button(this).apply {
+            text = label
+            tag = label
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            isAllCaps = false
+            setBackgroundColor(Color.parseColor("#14532D"))
+            setPadding(0, dp(12), 0, dp(12))
+            setOnClickListener { onTap(this) }
+        }
+        btn.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight).apply {
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
+        return btn
+    }
+
+    private fun letterKey(letter: String): Button {
+        val btn = keyBtn(letter) { b ->
+            val base = b.tag as String
+            commitText(if (shiftOn) base.uppercase() else base)
+            if (shiftOn) setShift(false)
+        }
+        letterKeys.add(btn)
+        return btn
+    }
+
+    private fun buildLettersPage(): LinearLayout {
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val r1 = row()
+        "qwertyuiop".forEach { r1.addView(letterKey(it.toString())) }
+        val r2 = row()
+        "asdfghjkl".forEach { r2.addView(letterKey(it.toString())) }
+        val r3 = row()
+        r3.addView(keyBtn("⇧", 1.5f) { setShift(!shiftOn) })
+        "zxcvbnm".forEach { r3.addView(letterKey(it.toString())) }
+        r3.addView(keyBtn("⌫", 1.5f) { backspace() })
+        val r4 = row()
+        r4.addView(keyBtn("?123", 1.5f) { showSymbols(true) })
+        r4.addView(keyBtn(",", 1f) { b -> commitText(b.tag as String) })
+        r4.addView(keyBtn("space", 4f) { commitText(" ") })
+        r4.addView(keyBtn(".", 1f) { b -> commitText(b.tag as String) })
+        r4.addView(keyBtn("↵", 1.5f) { sendEnter() })
+        page.addView(r1)
+        page.addView(r2)
+        page.addView(r3)
+        page.addView(r4)
+        return page
+    }
+
+    private fun buildSymbolsPage(): LinearLayout {
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val r1 = row()
+        "1234567890".forEach { r1.addView(keyBtn(it.toString()) { b -> commitText(b.tag as String) }) }
+        val r2 = row()
+        listOf("@", "#", "$", "%", "&", "-", "+", "(", ")").forEach {
+            r2.addView(keyBtn(it) { b -> commitText(b.tag as String) })
+        }
+        val r3 = row()
+        listOf("*", "\"", "'", ":", ";", "!", "?").forEach {
+            r3.addView(keyBtn(it) { b -> commitText(b.tag as String) })
+        }
+        r3.addView(keyBtn("⌫", 1.5f) { backspace() })
+        val r4 = row()
+        r4.addView(keyBtn("ABC", 1.5f) { showSymbols(false) })
+        r4.addView(keyBtn(",", 1f) { b -> commitText(b.tag as String) })
+        r4.addView(keyBtn("space", 4f) { commitText(" ") })
+        r4.addView(keyBtn(".", 1f) { b -> commitText(b.tag as String) })
+        r4.addView(keyBtn("↵", 1.5f) { sendEnter() })
+        page.addView(r1)
+        page.addView(r2)
+        page.addView(r3)
+        page.addView(r4)
+        return page
+    }
+
+    private fun setShift(on: Boolean) {
+        shiftOn = on
+        letterKeys.forEach { b ->
+            val base = b.tag as String
+            b.text = if (on) base.uppercase() else base
         }
     }
 
-    /** Parent ke liye: pichla normal keyboard wapas (ek tap), warna picker khol do. */
-    private fun switchToNormalKeyboard() {
-        try {
-            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-            val token = window?.window?.attributes?.token
-            if (token == null || !imm.switchToLastInputMethod(token)) {
-                imm.showInputMethodPicker()
-            }
-        } catch (_: Exception) {
+    private fun showSymbols(show: Boolean) {
+        lettersPage?.visibility = if (show) View.GONE else View.VISIBLE
+        symbolsPage?.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun commitText(s: String) {
+        currentInputConnection?.commitText(s, 1)
+    }
+
+    private fun backspace() {
+        currentInputConnection?.deleteSurroundingText(1, 0)
+    }
+
+    private fun sendEnter() {
+        val ic = currentInputConnection ?: return
+        val action = (currentInputEditorInfo?.imeOptions ?: 0) and EditorInfo.IME_MASK_ACTION
+        if (action != EditorInfo.IME_ACTION_NONE && action != 0) {
+            ic.performEditorAction(action)
+        } else {
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         }
     }
 }
