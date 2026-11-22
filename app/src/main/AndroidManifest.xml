@@ -76,6 +76,12 @@
             android:name=".service.ScreenRecordService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 🌐 Tawazun Safe Web VPN: system-wide website blocking (DNS filter) -->
+        <service
+            android:name=".service.TawazunDnsVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false" />
     </application>
 
 </manifest>
