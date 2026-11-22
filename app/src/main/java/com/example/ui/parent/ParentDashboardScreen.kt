@@ -134,6 +134,7 @@ fun ParentDashboardScreen(
     var showAddChildDialog by remember { mutableStateOf(false) }
     var approvingRequest by remember { mutableStateOf<LinkRequest?>(null) }
     var showChildLimitDialog by remember { mutableStateOf(false) }
+    var showChildModeDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // Family mein abhi koi bacha nahi — "pehla bacha add karein" ka screen
@@ -203,8 +204,8 @@ fun ParentDashboardScreen(
         if (showAddChildDialog) {
             AddChildDialog(
                 onDismiss = { showAddChildDialog = false },
-                onConfirm = { name, grade, email, device, emoji ->
-                    scope.launch { repository.addChild(name, grade, email, device, emoji) }
+                onConfirm = { name, grade, device, emoji ->
+                    scope.launch { repository.addChild(name, grade, "", device, emoji) }
                     showAddChildDialog = false
                 }
             )
@@ -395,6 +396,45 @@ fun ParentDashboardScreen(
                 }
             }
 
+            // 🧒 CHILD MODE — is phone par bachay ka student interface kholo
+            Card(
+                colors = CardDefaults.cardColors(containerColor = TawazunEmeraldPrimary.copy(alpha = 0.12f)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(currentChild.avatarEmoji, fontSize = 24.sp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${currentChild.name} — aap ki ye ${if (currentChild.avatarEmoji == "👧") "bacchi" else "baccha"} hai",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = TawazunTextPrimary
+                            )
+                            Text(
+                                "Is phone par bachay ka mode kholen — limits, Safe Web aur mirroring yahin se chalenge.",
+                                fontSize = 11.sp,
+                                color = TawazunTextSecondary,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = { showChildModeDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🧒 ${currentChild.name} ka Mode Kholen", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
             // 📨 Student link requests (student ne parent ka email dala tha)
             linkRequests.forEach { req ->
                 Card(
@@ -562,8 +602,8 @@ fun ParentDashboardScreen(
     if (showAddChildDialog) {
         AddChildDialog(
             onDismiss = { showAddChildDialog = false },
-            onConfirm = { name, grade, email, device, emoji ->
-                scope.launch { repository.addChild(name, grade, email, device, emoji) }
+            onConfirm = { name, grade, device, emoji ->
+                scope.launch { repository.addChild(name, grade, "", device, emoji) }
                 showAddChildDialog = false
             }
         )
@@ -582,6 +622,35 @@ fun ParentDashboardScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showChildLimitDialog = false }) { Text("Theek hai") }
+            }
+        )
+    }
+
+    // 🧒 Child mode confirm — "YES" par student interface + limits/mirroring start
+    if (showChildModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showChildModeDialog = false },
+            title = { Text("🧒 ${currentChild.name} ka Mode", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Is phone par ${currentChild.name} ka student interface khul jayega — app limits, " +
+                        "Safe Web blocking, bedtime aur screen mirroring sab is phone par start ho jayenge.\n\n" +
+                        "Wapas parent interface sirf aap ke PASSWORD se milega. 🔒\n\nStart karein?"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showChildModeDialog = false
+                        repository.enterChildMode(currentChild.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
+                ) {
+                    Text("✅ Haan, Start Karein")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChildModeDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -1871,11 +1940,10 @@ fun AuditTab(
 @Composable
 fun AddChildDialog(
     onDismiss: () -> Unit,
-    onConfirm: (name: String, grade: String, studentEmail: String, deviceModel: String, avatarEmoji: String) -> Unit
+    onConfirm: (name: String, grade: String, deviceModel: String, avatarEmoji: String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var grade by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
     var device by remember { mutableStateOf("") }
     var emoji by remember { mutableStateOf("👦") }
     val emojiChoices = listOf("👦", "👧", "🧒", "🧑")
@@ -1898,12 +1966,6 @@ fun AddChildDialog(
                     singleLine = true
                 )
                 OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Bachay ka email (login ke liye)") },
-                    singleLine = true
-                )
-                OutlinedTextField(
                     value = device,
                     onValueChange = { device = it },
                     label = { Text("Phone model (optional)") },
@@ -1919,7 +1981,7 @@ fun AddChildDialog(
                     }
                 }
                 Text(
-                    "Bacha isi email se apne phone par account banayega.",
+                    "Bachay ka koi email nahi chahiye — wo aap ke account ke andar hi rahega. 🧒",
                     fontSize = 11.sp,
                     color = TawazunTextSecondary
                 )
@@ -1931,12 +1993,11 @@ fun AddChildDialog(
                     onConfirm(
                         name.trim(),
                         grade.trim(),
-                        email.trim(),
                         device.trim().ifBlank { "Not paired yet" },
                         emoji
                     )
                 },
-                enabled = name.isNotBlank() && email.contains("@"),
+                enabled = name.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary)
             ) {
                 Text("Add Karein")
