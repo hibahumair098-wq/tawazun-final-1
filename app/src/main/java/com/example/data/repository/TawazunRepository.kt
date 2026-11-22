@@ -18,6 +18,7 @@ import com.example.domain.DomainFilter
 import com.example.service.GuardState
 import com.example.service.ScreenRecordService
 import com.example.service.ScreenSnapService
+import com.example.service.TawazunDnsVpnService
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
@@ -62,6 +63,7 @@ class TawazunRepository(private val appContext: Context? = null) {
     private var usageListener: ListenerRegistration? = null
     private var screenSnapListener: ListenerRegistration? = null
     private var webConfigListener: ListenerRegistration? = null
+    private var blockedDomainsListener: ListenerRegistration? = null
     private var webAttemptsListener: ListenerRegistration? = null
     private var childWaitListener: ListenerRegistration? = null
     private var subscriptionListener: ListenerRegistration? = null
@@ -669,6 +671,8 @@ class TawazunRepository(private val appContext: Context? = null) {
         screenSnapListener = null
         webConfigListener?.remove()
         webConfigListener = null
+        blockedDomainsListener?.remove()
+        blockedDomainsListener = null
         webAttemptsListener?.remove()
         webAttemptsListener = null
         subscriptionListener?.remove()
@@ -756,12 +760,15 @@ class TawazunRepository(private val appContext: Context? = null) {
                 ?.putBoolean("child_mode", false)
                 ?.remove("child_mode_id")
                 ?.apply()
-            // Capture services band + guard clear
+            // Capture services + VPN band + guard clear
             if (ScreenSnapService.isRunning) {
                 appContext?.stopService(Intent(appContext, ScreenSnapService::class.java))
             }
             if (ScreenRecordService.isRunning) {
                 appContext?.stopService(Intent(appContext, ScreenRecordService::class.java))
+            }
+            if (TawazunDnsVpnService.isRunning) {
+                appContext?.stopService(Intent(appContext, TawazunDnsVpnService::class.java))
             }
             guardLoopJob?.cancel()
             guardLoopJob = null
@@ -810,6 +817,7 @@ class TawazunRepository(private val appContext: Context? = null) {
         attachUsageListener(familyId)
         attachScreenSnapListener(familyId)
         attachWebConfigListener(familyId)
+        attachBlockedDomainsListener(familyId)
         attachWebAttemptsListener(familyId)
         attachSubscriptionListener(familyId)
         // 📨 Parent ho to student requests bhi suno
@@ -836,9 +844,21 @@ class TawazunRepository(private val appContext: Context? = null) {
         }
     }
 
+    /** 🚫 Parent ki blocked-domains list — LIVE (webConfig/blocked doc) — VPN filter ke liye. */
+    private fun attachBlockedDomainsListener(familyId: String) {
+        blockedDomainsListener?.remove()
+        blockedDomainsListener = db.collection("families").document(familyId)
+            .collection("webConfig").document("blocked")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _blockedDomains.value = (snapshot.get("domains") as? List<*>)
+                    ?.mapNotNull { it as? String }
+                    ?: emptyList()
+            }
+    }
+
     /** 🌐 Parent ki allowed-websites list — LIVE (webConfig/allowed doc). */
-    private fun attachWebConfigListener(familyId: String) {
-        webConfigListener?.remove()
+    private fun attachWebConfigListener(familyId: String) {        webConfigListener?.remove()
         webConfigListener = db.collection("families").document(familyId)
             .collection("webConfig").document("allowed")
             .addSnapshotListener { snapshot, error ->
@@ -1562,13 +1582,22 @@ class TawazunRepository(private val appContext: Context? = null) {
     fun addBlockedDomain(pattern: String) {
         val trimmed = pattern.trim().lowercase(Locale.ROOT)
         if (trimmed.isNotEmpty() && !_blockedDomains.value.contains(trimmed)) {
-            _blockedDomains.value = _blockedDomains.value + trimmed
-            addAudit("DOMAIN_RULE_ADDED", _currentSession.value?.email ?: "Parent", "Added block rule '$trimmed'")
+            val updated = _blockedDomains.value + trimmed
+            _blockedDomains.value = updated
+            // 🔥 Firestore mein bhi — warna bachay ke phone ka VPN filter nahi jaan sakta!
+            val fid = _currentSession.value?.familyId ?: return
+            db.collection("families").document(fid).collection("webConfig").document("blocked")
+                .set(mapOf("domains" to updated), SetOptions.merge())
+            addAudit("DOMAIN_RULE_ADDED", _currentSession.value?.email ?: "Parent", "Added block rule '$trimmed' (system-wide VPN)")
         }
     }
 
     fun removeBlockedDomain(pattern: String) {
-        _blockedDomains.value = _blockedDomains.value.filter { it != pattern }
+        val updated = _blockedDomains.value.filter { it != pattern }
+        _blockedDomains.value = updated
+        val fid = _currentSession.value?.familyId ?: return
+        db.collection("families").document(fid).collection("webConfig").document("blocked")
+            .set(mapOf("domains" to updated), SetOptions.merge())
         addAudit("DOMAIN_RULE_REMOVED", _currentSession.value?.email ?: "Parent", "Removed block rule '$pattern'")
     }
 
