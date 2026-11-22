@@ -64,6 +64,7 @@ class TawazunRepository(private val appContext: Context? = null) {
     private var screenSnapListener: ListenerRegistration? = null
     private var webConfigListener: ListenerRegistration? = null
     private var blockedDomainsListener: ListenerRegistration? = null
+    private var typingLockListener: ListenerRegistration? = null
     private var webAttemptsListener: ListenerRegistration? = null
     private var childWaitListener: ListenerRegistration? = null
     private var subscriptionListener: ListenerRegistration? = null
@@ -140,6 +141,10 @@ class TawazunRepository(private val appContext: Context? = null) {
     // Blocked Domains (ab sirf parent ki asli list — demo khatam)
     private val _blockedDomains = MutableStateFlow<List<String>>(emptyList())
     val blockedDomains: StateFlow<List<String>> = _blockedDomains.asStateFlow()
+
+    // ⌨️ Typing Lock (Null Keyboard IME) — parent switch karta hai, child phone par live
+    private val _typingLocked = MutableStateFlow(false)
+    val typingLocked: StateFlow<Boolean> = _typingLocked.asStateFlow()
 
     // Homework tasks
     private val _homeworkTasks = MutableStateFlow<List<HomeworkTask>>(emptyList())
@@ -673,6 +678,8 @@ class TawazunRepository(private val appContext: Context? = null) {
         webConfigListener = null
         blockedDomainsListener?.remove()
         blockedDomainsListener = null
+        typingLockListener?.remove()
+        typingLockListener = null
         webAttemptsListener?.remove()
         webAttemptsListener = null
         subscriptionListener?.remove()
@@ -818,6 +825,7 @@ class TawazunRepository(private val appContext: Context? = null) {
         attachScreenSnapListener(familyId)
         attachWebConfigListener(familyId)
         attachBlockedDomainsListener(familyId)
+        attachTypingLockListener(familyId)
         attachWebAttemptsListener(familyId)
         attachSubscriptionListener(familyId)
         // 📨 Parent ho to student requests bhi suno
@@ -854,6 +862,21 @@ class TawazunRepository(private val appContext: Context? = null) {
                 _blockedDomains.value = (snapshot.get("domains") as? List<*>)
                     ?.mapNotNull { it as? String }
                     ?: emptyList()
+            }
+    }
+
+    /** ⌨️ Typing Lock — LIVE (webConfig/keyboard doc) + local pref (IME yahi parhta hai). */
+    private fun attachTypingLockListener(familyId: String) {
+        typingLockListener?.remove()
+        typingLockListener = db.collection("families").document(familyId)
+            .collection("webConfig").document("keyboard")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val locked = snapshot.getBoolean("typingLocked") ?: false
+                _typingLocked.value = locked
+                // 🔥 Local pref bhi likho — TawazunNullKeyboard (IME) isi se lock on/off karta hai
+                appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)
+                    ?.edit()?.putBoolean("typing_lock", locked)?.apply()
             }
     }
 
@@ -1599,6 +1622,22 @@ class TawazunRepository(private val appContext: Context? = null) {
         db.collection("families").document(fid).collection("webConfig").document("blocked")
             .set(mapOf("domains" to updated), SetOptions.merge())
         addAudit("DOMAIN_RULE_REMOVED", _currentSession.value?.email ?: "Parent", "Removed block rule '$pattern'")
+    }
+
+    /** ⌨️ Typing Lock on/off — Firestore (dono phone sync) + local pref (IME) + audit. */
+    fun setTypingLock(enabled: Boolean) {
+        _typingLocked.value = enabled
+        appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)
+            ?.edit()?.putBoolean("typing_lock", enabled)?.apply()
+        val fid = _currentSession.value?.familyId ?: return
+        db.collection("families").document(fid).collection("webConfig").document("keyboard")
+            .set(mapOf("typingLocked" to enabled), SetOptions.merge())
+        addAudit(
+            if (enabled) "TYPING_LOCK_ON" else "TYPING_LOCK_OFF",
+            _currentSession.value?.email ?: "Parent",
+            if (enabled) "Typing Lock ON — child mode mein bachay ka keyboard band (null keyboard)"
+            else "Typing Lock OFF — keyboard wapas normal"
+        )
     }
 
     // --- SCREEN MIRRORING & PURGING ---
