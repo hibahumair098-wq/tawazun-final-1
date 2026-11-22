@@ -5,6 +5,7 @@ import android.net.VpnService
 import android.provider.Settings
 import android.app.Activity
 import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import android.media.projection.MediaProjectionManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -110,6 +111,7 @@ import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunErrorRed
 import com.example.ui.theme.TawazunGold
 import com.example.ui.theme.TawazunLockedGrey
+import kotlinx.coroutines.delay
 import com.example.ui.theme.TawazunSurface
 import com.example.ui.theme.TawazunSurfaceVariant
 import com.example.ui.theme.TawazunTealBg
@@ -132,6 +134,7 @@ fun StudentDeviceScreen(
     val homeworkTasks by repository.homeworkTasks.collectAsState()
     val allowedWebsites by repository.allowedWebsites.collectAsState()
     val blockedDomains by repository.blockedDomains.collectAsState()
+    val typingLocked by repository.typingLocked.collectAsState()
 
     val currentChild = children.find { it.id == selectedChildId } ?: children.first()
     val policies = policiesMap[currentChild.id] ?: emptyList()
@@ -432,6 +435,10 @@ fun StudentDeviceScreen(
                         }
                     }
                 }
+            }
+            // ⌨️ Typing Lock banner — keyboard lock setup/status (null keyboard IME)
+            if (typingLocked) {
+                TypingLockBanner()
             }
             // 🛡️ App Guard banner — asli blocking ke liye ek dafa permission
             if (!guardEnabled) {
@@ -1511,6 +1518,106 @@ fun BedtimePreviewTab(
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TawazunGold)
             ) {
                 Text("Emergency Call to Parents")
+            }
+        }
+    }
+}
+
+/**
+ * ⌨️ Typing Lock banner — child mode mein keyboard lock ka status/setup.
+ * Step 1: system settings mein "Tawazun Keyboard" ON karo
+ * Step 2: keyboard picker mein ise SELECT karo → lock ACTIVE
+ * (Har 3 second status refresh — enable/select karte hi update)
+ */
+@Composable
+fun TypingLockBanner() {
+    val context = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(tick) {
+        delay(3000)
+        tick++
+    }
+    val imm = remember {
+        context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    }
+    val imeEnabled = remember(tick) {
+        imm.enabledInputMethodList.any { it.packageName == context.packageName }
+    }
+    val imeSelected = remember(tick) {
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.contains("TawazunNullKeyboard") == true
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = TawazunEmeraldDark),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            if (imeSelected) {
+                Text(
+                    "⌨️ Typing Lock ACTIVE — keyboard band hai",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Bacha kisi bhi app mein type nahi kar sakta. Parent password se wapas normal keyboard milta hai.",
+                    fontSize = 11.sp,
+                    color = Color(0xFFD9EFE4),
+                    lineHeight = 15.sp
+                )
+            } else if (!imeEnabled) {
+                Text(
+                    "⌨️ Keyboard Lock ON karein (Step 1)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Settings > \"On-screen keyboard\" > \"Tawazun Keyboard 🔒\" ON karein.",
+                    fontSize = 11.sp,
+                    color = Color(0xFFD9EFE4),
+                    lineHeight = 15.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Text("1️⃣ Settings Kholen", fontSize = 12.sp)
+                }
+            } else {
+                Text(
+                    "⌨️ Keyboard Lock ON karein (Step 2)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Keyboard picker mein \"Tawazun Keyboard 🔒\" select karein.",
+                    fontSize = 11.sp,
+                    color = Color(0xFFD9EFE4),
+                    lineHeight = 15.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { imm.showInputMethodPicker() },
+                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Text("2️⃣ Keyboard Select karein", fontSize = 12.sp)
+                }
             }
         }
     }
