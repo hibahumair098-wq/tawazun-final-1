@@ -100,7 +100,11 @@ import com.example.data.repository.LinkRequest
 import com.example.data.repository.TawazunRepository
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
+import com.example.ui.theme.TawazunAmberSoft
+import com.example.ui.theme.TawazunCream
 import com.example.ui.theme.TawazunErrorRed
+import com.example.ui.theme.TawazunMintSoft
+import com.example.ui.theme.TawazunRedSoft
 import com.example.ui.theme.TawazunGold
 import com.example.ui.theme.TawazunLockedGrey
 import com.example.ui.theme.TawazunSurface
@@ -193,7 +197,7 @@ fun ParentDashboardScreen(
                         Button(
                             onClick = { showAddChildDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
@@ -233,7 +237,7 @@ fun ParentDashboardScreen(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = TawazunSurface,
+                    containerColor = TawazunCream,
                     titleContentColor = TawazunTextPrimary
                 ),
                 title = {
@@ -377,7 +381,7 @@ fun ParentDashboardScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(TawazunSurface)
+                    .background(TawazunCream)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -403,13 +407,23 @@ fun ParentDashboardScreen(
                 }
             }
 
+            // Tab Content
+            when (currentTab) {
+                0 -> OverviewTab(
+                    child = currentChild,
+                    homework = currentChildHomework,
+                    policies = currentChildPolicies,
+                    webAttempts = webAttempts.filter { it.childId == selectedChildId },
+                    onNavigateToHomework = { currentTab = 1 },
+                    onNavigateToRules = { currentTab = 2 },
+                    header = {
             // 🧒 CHILD MODE — is phone par bachay ka student interface kholo
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunEmeraldPrimary.copy(alpha = 0.12f)),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -434,7 +448,7 @@ fun ParentDashboardScreen(
                     Button(
                         onClick = { showChildModeDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("🧒 ${currentChild.name} ka Mode Kholen", fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -446,10 +460,10 @@ fun ParentDashboardScreen(
             linkRequests.forEach { req ->
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -474,7 +488,7 @@ fun ParentDashboardScreen(
                             Button(
                                 onClick = { approvingRequest = req },
                                 colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Text("✅ Approve", fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -482,7 +496,7 @@ fun ParentDashboardScreen(
                             OutlinedButton(
                                 onClick = { repository.rejectRequest(req.id) },
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TawazunErrorRed),
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Text("✗ Reject", fontSize = 12.sp)
@@ -496,10 +510,10 @@ fun ParentDashboardScreen(
             if (subscription.status == "TRIAL_EXPIRED") {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunErrorRed.copy(alpha = 0.12f)),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text(
@@ -522,9 +536,9 @@ fun ParentDashboardScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ,
                 colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(14.dp)
             ) {
                 Row(
                     modifier = Modifier.padding(12.dp),
@@ -555,15 +569,8 @@ fun ParentDashboardScreen(
                 }
             }
 
-            // Tab Content
-            when (currentTab) {
-                0 -> OverviewTab(
-                    child = currentChild,
-                    homework = currentChildHomework,
-                    policies = currentChildPolicies,
-                    webAttempts = webAttempts.filter { it.childId == selectedChildId },
-                    onNavigateToHomework = { currentTab = 1 },
-                    onNavigateToRules = { currentTab = 2 }
+
+                    }
                 )
                 1 -> HomeworkTab(
                     child = currentChild,
@@ -716,22 +723,26 @@ fun OverviewTab(
     policies: List<AppPolicy>,
     webAttempts: List<com.example.data.model.WebAttempt>,
     onNavigateToHomework: () -> Unit,
-    onNavigateToRules: () -> Unit
+    onNavigateToRules: () -> Unit,
+    header: @Composable () -> Unit = {}
 ) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // ⬆️ Overview-only header: child mode card, link requests, 3-day notice
+        item { header() }
+
         // Balance Mode Banner
         item {
             val pendingVerification = homework.count { !it.isVerifiedByParent }
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (child.homeworkUnlocked) TawazunEmeraldDark else Color(0xFF2C1616)
+                    containerColor = if (child.homeworkUnlocked) TawazunMintSoft else TawazunRedSoft
                 ),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -772,7 +783,7 @@ fun OverviewTab(
                     ) {
                         Text(
                             if (child.homeworkUnlocked) "Review" else "Verify",
-                            color = Color.Black,
+                            color = if (child.homeworkUnlocked) Color.White else Color.Black,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
                         )
@@ -815,7 +826,7 @@ fun OverviewTab(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -875,7 +886,7 @@ fun OverviewTab(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -949,7 +960,7 @@ fun StatCard(
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-        shape = RoundedCornerShape(10.dp)
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Icon(imageVector = icon, contentDescription = null, tint = TawazunEmeraldPrimary, modifier = Modifier.size(20.dp))
@@ -990,7 +1001,7 @@ fun HomeworkTab(
             Button(
                 onClick = { showAddDialog = true },
                 colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(46.dp)
@@ -1001,7 +1012,7 @@ fun HomeworkTab(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1025,7 +1036,7 @@ fun HomeworkTab(
         items(tasks) { task ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1150,7 +1161,7 @@ fun RulesTab(
         items(policies) { policy ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1215,7 +1226,7 @@ fun RulesTab(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1253,7 +1264,7 @@ fun RulesTab(
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                            shape = RoundedCornerShape(6.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.height(52.dp)
                         ) {
                             Text("Add", fontSize = 12.sp)
@@ -1297,7 +1308,7 @@ fun RulesTab(
                             Spacer(modifier = Modifier.width(8.dp))
                             OutlinedButton(
                                 onClick = { onRemoveAllowed(site) },
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(32.dp)
                             ) {
                                 Text("🗑 Remove", fontSize = 10.sp, color = TawazunErrorRed)
@@ -1401,7 +1412,7 @@ fun RulesTab(
                 Row {
                     OutlinedButton(
                         onClick = { kbContext.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) },
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.height(34.dp)
                     ) {
                         Text("1️⃣ Keyboard Settings", fontSize = 11.sp)
@@ -1409,7 +1420,7 @@ fun RulesTab(
                     Spacer(modifier = Modifier.width(8.dp))
                     OutlinedButton(
                         onClick = { kbImm.showInputMethodPicker() },
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.height(34.dp)
                     ) {
                         Text("2️⃣ Select Keyboard", fontSize = 11.sp)
@@ -1461,7 +1472,7 @@ fun RulesTab(
         items(blockedDomains) { domain ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -1506,7 +1517,7 @@ fun MirrorTab(
             item {
                 Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1547,7 +1558,7 @@ fun MirrorTab(
                                 contentDescription = "Live screen snapshot",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp)),
+                                    .clip(RoundedCornerShape(14.dp)),
                                 contentScale = ContentScale.FillWidth
                             )
                         } else {
@@ -1580,7 +1591,7 @@ fun MirrorTab(
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
@@ -1607,7 +1618,7 @@ fun MirrorTab(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -1657,7 +1668,7 @@ fun MirrorTab(
                                 containerColor = if (child.mirrorMode != "video") TawazunEmeraldPrimary else Color.Transparent,
                                 contentColor = if (child.mirrorMode != "video") Color.White else TawazunTextPrimary
                             ),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(38.dp)
@@ -1671,7 +1682,7 @@ fun MirrorTab(
                                 containerColor = if (child.mirrorMode == "video") TawazunEmeraldPrimary else Color.Transparent,
                                 contentColor = if (child.mirrorMode == "video") Color.White else TawazunTextPrimary
                             ),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(38.dp)
@@ -1779,9 +1790,9 @@ fun MirrorTab(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(Color(0xFF0F201C))
-                                .border(1.dp, TawazunEmeraldPrimary, RoundedCornerShape(8.dp)),
+                                .border(1.dp, TawazunEmeraldPrimary, RoundedCornerShape(14.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1834,7 +1845,7 @@ fun ChildrenTab(
         items(children) { child ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1895,7 +1906,7 @@ fun BillingTab(
     ) {
         Card(
             colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(18.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
@@ -1948,7 +1959,7 @@ fun BillingTab(
                         onClick = { },
                         enabled = false,
                         colors = ButtonDefaults.buttonColors(containerColor = TawazunGold),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("💎 Renew — ₨299/month (Coming Soon)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -1956,7 +1967,7 @@ fun BillingTab(
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = onExtendDemo,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("🎁 Demo: 7 Din Aur Free Extend Karein", fontSize = 12.sp)
@@ -1973,7 +1984,7 @@ fun BillingTab(
                         onClick = { },
                         enabled = false,
                         colors = ButtonDefaults.buttonColors(containerColor = TawazunGold),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("💎 Abhi Subscribe Karein — ₨299 (Coming Soon)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -2022,7 +2033,7 @@ fun AuditTab(
         items(auditLogs) { log ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
