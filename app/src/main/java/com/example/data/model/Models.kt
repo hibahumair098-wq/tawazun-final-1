@@ -121,6 +121,7 @@ data class SubscriptionInfo(
     val planName: String = "Tawazun Family Shield",
     val price: String = "PKR 299/month",
     val trialDaysRemaining: Int = 5,
+    val trialRemainingMs: Long = 0L,
     val playBillingId: String = "pk.tawazun.monthly.299",
     val purchaseToken: String = "play_token_enc_91028301928"
 )
