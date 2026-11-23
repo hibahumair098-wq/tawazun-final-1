@@ -98,6 +98,11 @@ import com.example.data.model.Child
 import com.example.data.model.HomeworkTask
 import com.example.data.repository.LinkRequest
 import com.example.data.repository.TawazunRepository
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import com.example.data.trial.TrialClock
+import com.example.ui.paywall.PaywallScreen
+import com.example.ui.paywall.TrialCountdownCard
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunAmberSoft
@@ -112,6 +117,7 @@ import com.example.ui.theme.TawazunSurfaceVariant
 import com.example.ui.theme.TawazunTextPrimary
 import com.example.ui.theme.TawazunTextSecondary
 import com.example.ui.theme.TawazunWarningAmber
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -141,6 +147,28 @@ fun ParentDashboardScreen(
     val subscription by repository.subscription.collectAsState()
     val linkRequests by repository.linkRequests.collectAsState()
     val childrenLoading by repository.childrenLoading.collectAsState()
+
+    // ⏳ 72-GHANTE TRIAL GATE — timer zero hote hi payment screen khud khul jati hai
+    val trialCtx = LocalContext.current
+    var liveTrialMs by remember { mutableLongStateOf(TrialClock.remainingMs(trialCtx)) }
+    LaunchedEffect(Unit) {
+        liveTrialMs = TrialClock.remainingMs(trialCtx)
+        while (true) {
+            liveTrialMs = TrialClock.remainingMs(trialCtx)
+            delay(1000L)
+        }
+    }
+    val trialLocked = !TrialClock.isPaid(trialCtx) && liveTrialMs <= 0L && subscription.status != "ACTIVE_SUBSCRIPTION"
+
+    if (trialLocked) {
+        PaywallScreen(
+            remainingMs = liveTrialMs,
+            onActivate = { repository.activateSubscription() },
+            onLogout = onLogout,
+            modifier = modifier
+        )
+        return
+    }
 
     var showAddChildDialog by remember { mutableStateOf(false) }
     var approvingRequest by remember { mutableStateOf<LinkRequest?>(null) }
@@ -417,6 +445,7 @@ fun ParentDashboardScreen(
                     onNavigateToHomework = { currentTab = 1 },
                     onNavigateToRules = { currentTab = 2 },
                     header = {
+                        TrialCountdownCard()
             // 🧒 CHILD MODE — is phone par bachay ka student interface kholo
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunEmeraldPrimary.copy(alpha = 0.12f)),
@@ -608,7 +637,7 @@ fun ParentDashboardScreen(
                 )
                 5 -> BillingTab(
                     subscription = subscription,
-                    onExtendDemo = { repository.extendDemoTrial(7) }
+                    onActivate = { repository.activateSubscription() }
                 )
                 6 -> AuditTab(
                     auditLogs = auditLogs
@@ -1885,9 +1914,17 @@ fun ChildrenTab(
 @Composable
 fun BillingTab(
     subscription: com.example.data.model.SubscriptionInfo,
-    onExtendDemo: () -> Unit
+    onActivate: () -> Unit
 ) {
-    val expired = subscription.status == "TRIAL_EXPIRED"
+    val billingCtx = LocalContext.current
+    var billingMs by remember { mutableLongStateOf(TrialClock.remainingMs(billingCtx)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            billingMs = TrialClock.remainingMs(billingCtx)
+            delay(1000L)
+        }
+    }
+    val expired = subscription.status == "TRIAL_EXPIRED" || (!TrialClock.isPaid(billingCtx) && billingMs <= 0L)
     val statusLabel = when (subscription.status) {
         "ACTIVE_TRIAL" -> "🎁 FREE TRIAL"
         "ACTIVE_SUBSCRIPTION" -> "✅ SUBSCRIBED"
@@ -1939,11 +1976,26 @@ fun BillingTab(
                     color = TawazunGold
                 )
                 Text(
-                    if (expired) "Free trial khatam — bachay ka app locked hai ⏰"
-                    else "3-Day Free Trial • ${subscription.trialDaysRemaining} din baqi • 1 Bacha",
+                    if (TrialClock.isPaid(billingCtx)) "✅ Subscription active — 1 Bacha"
+                    else if (expired) "Free trial khatam — bachay ka app locked hai ⏰"
+                    else "72-Ghante Free Trial • ${TrialClock.human(billingMs)} • 1 Bacha",
                     fontSize = 12.sp,
                     color = TawazunTextSecondary
                 )
+                if (!TrialClock.isPaid(billingCtx)) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        TrialClock.format(billingMs),
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (expired) TawazunErrorRed else TawazunEmeraldPrimary
+                    )
+                    Text(
+                        "logout / login se timer reset NAHI hota",
+                        fontSize = 10.sp,
+                        color = TawazunTextSecondary
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -1956,22 +2008,21 @@ fun BillingTab(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
-                        onClick = { },
-                        enabled = false,
-                        colors = ButtonDefaults.buttonColors(containerColor = TawazunGold),
+                        onClick = onActivate,
+                        colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
                         shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
                     ) {
-                        Text("💎 Renew — ₨299/month (Coming Soon)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("✅ Payment ho gaya — Activate karein", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = onExtendDemo,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("🎁 Demo: 7 Din Aur Free Extend Karein", fontSize = 12.sp)
-                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "JazzCash / Easypaisa gateway jald aa raha hai — filhal activation manual hai.",
+                        fontSize = 10.sp,
+                        color = TawazunTextSecondary
+                    )
                 } else {
                     Text(
                         "Trial ke baad ₨299/month ki subscription lagegi (1 bacha). Hum trial khatam hone se pehle aap ko bata denge. 💚",
