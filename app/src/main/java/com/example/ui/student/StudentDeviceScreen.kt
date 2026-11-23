@@ -5,7 +5,6 @@ import android.net.VpnService
 import android.provider.Settings
 import android.app.Activity
 import android.content.Context
-import android.view.inputmethod.InputMethodManager
 import android.media.projection.MediaProjectionManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -111,7 +110,6 @@ import com.example.ui.theme.TawazunEmeraldPrimary
 import com.example.ui.theme.TawazunErrorRed
 import com.example.ui.theme.TawazunGold
 import com.example.ui.theme.TawazunLockedGrey
-import kotlinx.coroutines.delay
 import com.example.ui.theme.TawazunSurface
 import com.example.ui.theme.TawazunSurfaceVariant
 import com.example.ui.theme.TawazunTealBg
@@ -134,7 +132,6 @@ fun StudentDeviceScreen(
     val homeworkTasks by repository.homeworkTasks.collectAsState()
     val allowedWebsites by repository.allowedWebsites.collectAsState()
     val blockedDomains by repository.blockedDomains.collectAsState()
-    val typingLocked by repository.typingLocked.collectAsState()
 
     val currentChild = children.find { it.id == selectedChildId } ?: children.first()
     val policies = policiesMap[currentChild.id] ?: emptyList()
@@ -349,16 +346,6 @@ fun StudentDeviceScreen(
                 NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = { currentTab = 2 },
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Smart Chat") },
-                    label = { Text("Smart Chat", fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = TawazunWhatsAppGreen,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                )
-                NavigationBarItem(
-                    selected = currentTab == 3,
-                    onClick = { currentTab = 3 },
                     icon = { Icon(Icons.Default.Public, contentDescription = "Safe Web") },
                     label = { Text("Safe Web", fontSize = 10.sp) },
                     colors = NavigationBarItemDefaults.colors(
@@ -367,8 +354,8 @@ fun StudentDeviceScreen(
                     )
                 )
                 NavigationBarItem(
-                    selected = currentTab == 4,
-                    onClick = { currentTab = 4 },
+                    selected = currentTab == 3,
+                    onClick = { currentTab = 3 },
                     icon = { Icon(Icons.Default.Bedtime, contentDescription = "Bedtime") },
                     label = { Text("Bedtime", fontSize = 10.sp) },
                     colors = NavigationBarItemDefaults.colors(
@@ -435,10 +422,6 @@ fun StudentDeviceScreen(
                         }
                     }
                 }
-            }
-            // ⌨️ Typing Lock banner — keyboard lock setup/status (null keyboard IME)
-            if (typingLocked) {
-                TypingLockBanner()
             }
             // 🛡️ App Guard banner — asli blocking ke liye ek dafa permission
             if (!guardEnabled) {
@@ -724,24 +707,14 @@ fun StudentDeviceScreen(
                     onUseApp = { appKey, mins -> repository.recordAppUsage(currentChild.id, appKey, mins) },
                     onBlockedClick = { appLaunchBlockedDialog = it }
                 )
-                2 -> StudentSmartChatTab(
-                    child = currentChild,
-                    whatsappPolicy = policies.find { it.appKey == "whatsapp" } ?: AppPolicy("whatsapp", "WhatsApp", AppCategory.COMMUNICATION, "💬", 60),
-                    onSimulateExhaustion = {
-                        val p = policies.find { it.appKey == "whatsapp" }
-                        if (p != null) {
-                            repository.recordAppUsage(currentChild.id, "whatsapp", p.remainingMin + 1)
-                        }
-                    }
-                )
-                3 -> StudentBrowserTab(
+                2 -> StudentBrowserTab(
                     child = currentChild,
                     allowedWebsites = allowedWebsites,
                     onVisit = { url, blocked ->
                         repository.logWebVisit(currentChild.id, url, blocked)
                     }
                 )
-                4 -> BedtimePreviewTab(
+                3 -> BedtimePreviewTab(
                     child = currentChild
                 )
             }
@@ -1001,228 +974,6 @@ fun StudentAppsTab(
                         ) {
                             Text("Use 10m", fontSize = 11.sp)
                         }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun StudentSmartChatTab(
-    child: Child,
-    whatsappPolicy: AppPolicy,
-    onSimulateExhaustion: () -> Unit
-) {
-    val isReadOnly = whatsappPolicy.remainingMin <= 0
-    var messageText by remember { mutableStateOf("") }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        // Smart Chat Status Header
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (isReadOnly) Color(0xFF2C1E12) else TawazunEmeraldDark
-            ),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "WhatsApp: Smart School Chat",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = Color.White
-                    )
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (isReadOnly) TawazunWarningAmber else TawazunWhatsAppGreen)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            if (isReadOnly) "READ-ONLY MODE" else "${whatsappPolicy.remainingMin}m REMAINING",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (isReadOnly) {
-                        "⚠️ Daily messaging quota is reached. Incoming teacher notes & class homework remain readable so learning is never blocked."
-                    } else {
-                        "Chatting with friends is limited, but school worksheets and notes sent by teachers are always accessible."
-                    },
-                    fontSize = 11.sp,
-                    color = TawazunTextSecondary,
-                    lineHeight = 15.sp
-                )
-
-                if (!isReadOnly) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = onSimulateExhaustion,
-                        modifier = Modifier.height(30.dp)
-                    ) {
-                        Text("Simulate Exhausting Quota (Test Read-Only)", fontSize = 10.sp, color = TawazunGold)
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Simulated Class Chat Messages
-        Text("Class 9 - Matric (St. Jude's High School)", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = TawazunTextPrimary)
-        Spacer(modifier = Modifier.height(6.dp))
-
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item {
-                ChatMessageBubble(
-                    sender = "Sir Tariq (Math)",
-                    time = "3:15 PM",
-                    message = "Salam class. Please complete Exercise 2.3 questions 1 to 10. Bring solved copies tomorrow.",
-                    attachment = "📄 Math_Ex_2.3_Worksheet.pdf (1.2 MB)",
-                    isTeacher = true
-                )
-            }
-            item {
-                ChatMessageBubble(
-                    sender = "Miss Sadia (Physics)",
-                    time = "4:30 PM",
-                    message = "Numerical problems 3.1 to 3.5 are due tomorrow morning. Do not copy from keys.",
-                    attachment = "📷 Blackboard_Formulas.jpg",
-                    isTeacher = true
-                )
-            }
-            item {
-                ChatMessageBubble(
-                    sender = "Hamza (Classmate)",
-                    time = "5:10 PM",
-                    message = "Did anyone solve question 7 of math? Is the answer x = 4?",
-                    isTeacher = false
-                )
-            }
-            item {
-                ChatMessageBubble(
-                    sender = "You",
-                    time = "5:20 PM",
-                    message = "Yes, x = 4 is correct. Factored by splitting the middle term.",
-                    isTeacher = false,
-                    isSelf = true
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Message Input Row
-        if (isReadOnly) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(TawazunSurfaceVariant)
-                    .padding(12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "🔒 Messaging Locked: Read-Only Mode Active (Limit Reached)",
-                    fontSize = 12.sp,
-                    color = TawazunWarningAmber,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = messageText,
-                    onValueChange = { messageText = it },
-                    placeholder = { Text("Message Class 9 Group...") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                IconButton(
-                    onClick = { messageText = "" },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(TawazunWhatsAppGreen)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.Black)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ChatMessageBubble(
-    sender: String,
-    time: String,
-    message: String,
-    attachment: String? = null,
-    isTeacher: Boolean = false,
-    isSelf: Boolean = false
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isSelf) Arrangement.End else Arrangement.Start
-    ) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (isSelf) TawazunEmeraldDark else TawazunSurface
-            ),
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.widthIn(max = 280.dp)
-        ) {
-            Column(modifier = Modifier.padding(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        sender,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = if (isTeacher) TawazunGold else TawazunEmeraldPrimary
-                    )
-                    Text(time, fontSize = 9.sp, color = TawazunLockedGrey)
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(message, fontSize = 12.sp, color = TawazunTextPrimary, lineHeight = 15.sp)
-
-                if (attachment != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(TawazunSurfaceVariant)
-                            .padding(6.dp)
-                    ) {
-                        Text(attachment, fontSize = 11.sp, color = TawazunGold, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -1518,106 +1269,6 @@ fun BedtimePreviewTab(
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TawazunGold)
             ) {
                 Text("Emergency Call to Parents")
-            }
-        }
-    }
-}
-
-/**
- * ⌨️ Typing Lock banner — child mode mein keyboard lock ka status/setup.
- * Step 1: system settings mein "Tawazun Keyboard" ON karo
- * Step 2: keyboard picker mein ise SELECT karo → lock ACTIVE
- * (Har 3 second status refresh — enable/select karte hi update)
- */
-@Composable
-fun TypingLockBanner() {
-    val context = LocalContext.current
-    var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(tick) {
-        delay(3000)
-        tick++
-    }
-    val imm = remember {
-        context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-    }
-    val imeEnabled = remember(tick) {
-        imm.enabledInputMethodList.any { it.packageName == context.packageName }
-    }
-    val imeSelected = remember(tick) {
-        Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            ?.contains("TawazunNullKeyboard") == true
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = TawazunEmeraldDark),
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            if (imeSelected) {
-                Text(
-                    "⌨️ Typing Lock ACTIVE — keyboard band hai",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "Bacha kisi bhi app mein type nahi kar sakta. Parent password se wapas normal keyboard milta hai.",
-                    fontSize = 11.sp,
-                    color = Color(0xFFD9EFE4),
-                    lineHeight = 15.sp
-                )
-            } else if (!imeEnabled) {
-                Text(
-                    "⌨️ Keyboard Lock ON karein (Step 1)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "Settings > \"On-screen keyboard\" > \"Tawazun Keyboard 🔒\" ON karein.",
-                    fontSize = 11.sp,
-                    color = Color(0xFFD9EFE4),
-                    lineHeight = 15.sp
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(38.dp)
-                ) {
-                    Text("1️⃣ Settings Kholen", fontSize = 12.sp)
-                }
-            } else {
-                Text(
-                    "⌨️ Keyboard Lock ON karein (Step 2)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "Keyboard picker mein \"Tawazun Keyboard 🔒\" select karein.",
-                    fontSize = 11.sp,
-                    color = Color(0xFFD9EFE4),
-                    lineHeight = 15.sp
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = { imm.showInputMethodPicker() },
-                    colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(38.dp)
-                ) {
-                    Text("2️⃣ Keyboard Select karein", fontSize = 12.sp)
-                }
             }
         }
     }
