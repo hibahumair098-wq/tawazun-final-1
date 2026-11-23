@@ -146,6 +146,10 @@ class TawazunRepository(private val appContext: Context? = null) {
     private val _typingLocked = MutableStateFlow(false)
     val typingLocked: StateFlow<Boolean> = _typingLocked.asStateFlow()
 
+    // ⌨️ Per-app keyboard block list — kis app mein keyboard nahi khulega
+    private val _keyboardBlockedApps = MutableStateFlow<List<String>>(emptyList())
+    val keyboardBlockedApps: StateFlow<List<String>> = _keyboardBlockedApps.asStateFlow()
+
     // Homework tasks
     private val _homeworkTasks = MutableStateFlow<List<HomeworkTask>>(emptyList())
     val homeworkTasks: StateFlow<List<HomeworkTask>> = _homeworkTasks.asStateFlow()
@@ -874,9 +878,12 @@ class TawazunRepository(private val appContext: Context? = null) {
                 if (error != null || snapshot == null) return@addSnapshotListener
                 val locked = snapshot.getBoolean("typingLocked") ?: false
                 _typingLocked.value = locked
+                val apps = (snapshot.get("apps") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                _keyboardBlockedApps.value = apps
                 // 🔥 Local pref bhi likho — TawazunNullKeyboard (IME) isi se lock on/off karta hai
                 appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)
-                    ?.edit()?.putBoolean("typing_lock", locked)?.apply()
+                    ?.edit()?.putBoolean("typing_lock", locked)
+                    ?.putStringSet("keyboard_blocked_apps", apps.toSet())?.apply()
             }
     }
 
@@ -1635,8 +1642,25 @@ class TawazunRepository(private val appContext: Context? = null) {
         addAudit(
             if (enabled) "TYPING_LOCK_ON" else "TYPING_LOCK_OFF",
             _currentSession.value?.email ?: "Parent",
-            if (enabled) "Typing Lock ON — child mode mein bachay ka keyboard band (null keyboard)"
+            if (enabled) "Typing Lock ON — per-app keyboard lock armed (Rules tab mein apps select karein)"
             else "Typing Lock OFF — keyboard wapas normal"
+        )
+    }
+
+    /** ⌨️ Per-app keyboard block — e.g. WhatsApp mein keyboard nahi khulega. */
+    fun setAppKeyboardBlocked(appKey: String, blocked: Boolean) {
+        val current = _keyboardBlockedApps.value
+        val updated = if (blocked) (current + appKey).distinct() else current - appKey
+        _keyboardBlockedApps.value = updated
+        appContext?.getSharedPreferences("tawazun_auth", Context.MODE_PRIVATE)
+            ?.edit()?.putStringSet("keyboard_blocked_apps", updated.toSet())?.apply()
+        val fid = _currentSession.value?.familyId ?: return
+        db.collection("families").document(fid).collection("webConfig").document("keyboard")
+            .set(mapOf("apps" to updated), SetOptions.merge())
+        addAudit(
+            if (blocked) "KEYBOARD_APP_BLOCKED" else "KEYBOARD_APP_UNBLOCKED",
+            _currentSession.value?.email ?: "Parent",
+            "Keyboard lock ${if (blocked) "ON" else "OFF"} for '$appKey'"
         )
     }
 
