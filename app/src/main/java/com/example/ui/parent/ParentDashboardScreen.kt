@@ -3,6 +3,11 @@ package com.example.ui.parent
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -122,6 +127,7 @@ fun ParentDashboardScreen(
     val homeworkTasks by repository.homeworkTasks.collectAsState()
     val blockedDomains by repository.blockedDomains.collectAsState()
     val typingLocked by repository.typingLocked.collectAsState()
+    val keyboardBlockedApps by repository.keyboardBlockedApps.collectAsState()
     val usageEvents by repository.usageEvents.collectAsState()
     val webAttempts by repository.webAttempts.collectAsState()
     val allowedWebsites by repository.allowedWebsites.collectAsState()
@@ -572,13 +578,15 @@ fun ParentDashboardScreen(
                     policies = currentChildPolicies,
                     blockedDomains = blockedDomains,
                     typingLocked = typingLocked,
+                    keyboardBlockedApps = keyboardBlockedApps,
                     allowedWebsites = allowedWebsites,
                     onUpdateLimit = { appKey, limit -> repository.updatePolicy(currentChild.id, appKey, limit) },
                     onAddDomain = { repository.addBlockedDomain(it) },
                     onRemoveDomain = { repository.removeBlockedDomain(it) },
                     onAddAllowed = { repository.addAllowedWebsite(it) },
                     onRemoveAllowed = { repository.removeAllowedWebsite(it) },
-                    onSetTypingLock = { repository.setTypingLock(it) }
+                    onSetTypingLock = { repository.setTypingLock(it) },
+                    onToggleAppKeyboard = { app, blocked -> repository.setAppKeyboardBlocked(app, blocked) }
                 )
                 3 -> MirrorTab(
                     child = currentChild,
@@ -1106,13 +1114,15 @@ fun RulesTab(
     policies: List<AppPolicy>,
     blockedDomains: List<String>,
     typingLocked: Boolean,
+    keyboardBlockedApps: List<String>,
     allowedWebsites: List<String>,
     onUpdateLimit: (String, Int) -> Unit,
     onAddDomain: (String) -> Unit,
     onRemoveDomain: (String) -> Unit,
     onAddAllowed: (String) -> Unit,
     onRemoveAllowed: (String) -> Unit,
-    onSetTypingLock: (Boolean) -> Unit
+    onSetTypingLock: (Boolean) -> Unit,
+    onToggleAppKeyboard: (String, Boolean) -> Unit
 ) {
     var newDomainText by remember { mutableStateOf("") }
     var newSiteText by remember { mutableStateOf("") }
@@ -1298,17 +1308,17 @@ fun RulesTab(
             }
         }
 
-        // ⌨️ Typing Lock Section — Null Keyboard (system-wide typing block)
+        // ⌨️ No-Keyboard Apps Section — per-app typing block (null keyboard)
         item {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "⌨️ Typing Lock (Keyboard Band)",
+                text = "⌨️ No-Keyboard Lock (Per App)",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = TawazunTextPrimary
             )
             Text(
-                text = "ON: child mode mein soft keyboard nahi khulta — Chrome/search/WhatsApp mein type nahi kar sakta. Parent apne password se wapas normal keyboard le sakta hai.",
+                text = "ON karke neeche select karein ke kis app mein bachay ka keyboard nahi khulega (e.g. WhatsApp — app khul sakti hai, par type nahi kar sakta). Sirf child mode mein lagta hai.",
                 fontSize = 11.sp,
                 color = TawazunTextSecondary
             )
@@ -1318,7 +1328,7 @@ fun RulesTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (typingLocked) "Lock ON — bachay ka keyboard band hai" else "Lock OFF — keyboard normal hai",
+                    text = if (typingLocked) "Lock ON — neeche apps select karein" else "Lock OFF — keyboard sab jagah normal",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = if (typingLocked) TawazunErrorRed else TawazunTextSecondary,
@@ -1332,6 +1342,79 @@ fun RulesTab(
                         checkedTrackColor = TawazunEmeraldPrimary
                     )
                 )
+            }
+            if (typingLocked) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Kis app mein keyboard band karna hai?",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunTextPrimary
+                )
+                val keyboardApps = listOf(
+                    Triple("whatsapp", "WhatsApp", "💬"),
+                    Triple("chrome", "Chrome Browser", "🌐"),
+                    Triple("youtube", "YouTube", "▶️"),
+                    Triple("instagram", "Instagram", "📷"),
+                    Triple("tiktok", "TikTok", "🎵"),
+                    Triple("telegram", "Telegram", "✈️"),
+                    Triple("snapchat", "Snapchat", "👻")
+                )
+                for ((appKey, appName, emoji) in keyboardApps) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$emoji $appName",
+                            fontSize = 13.sp,
+                            color = TawazunTextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = keyboardBlockedApps.contains(appKey),
+                            onCheckedChange = { onToggleAppKeyboard(appKey, it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = TawazunEmeraldPrimary
+                            )
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Setup (sirf pehli dafa):",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TawazunTextPrimary
+                )
+                Text(
+                    text = "1️⃣ 'Tawazun Keyboard' ON karein → 2️⃣ keyboard picker mein 'Tawazun Keyboard' select karein. Phir lock selected apps par khud lagta hai.",
+                    fontSize = 11.sp,
+                    color = TawazunTextSecondary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val kbContext = LocalContext.current
+                val kbImm = remember {
+                    kbContext.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                }
+                Row {
+                    OutlinedButton(
+                        onClick = { kbContext.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) },
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text("1️⃣ Keyboard Settings", fontSize = 11.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = { kbImm.showInputMethodPicker() },
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text("2️⃣ Select Keyboard", fontSize = 11.sp)
+                    }
+                }
             }
         }
 
