@@ -107,7 +107,10 @@ import com.example.service.ScreenSnapService
 import com.example.service.TawazunDnsVpnService
 import com.example.ui.theme.TawazunEmeraldDark
 import com.example.ui.theme.TawazunEmeraldPrimary
+import com.example.ui.theme.TawazunAmberSoft
+import com.example.ui.theme.TawazunCream
 import com.example.ui.theme.TawazunErrorRed
+import com.example.ui.theme.TawazunMintSoft
 import com.example.ui.theme.TawazunGold
 import com.example.ui.theme.TawazunLockedGrey
 import com.example.ui.theme.TawazunSurface
@@ -375,7 +378,7 @@ fun StudentDeviceScreen(
             // 📊 Usage Access banner — asli tracking ke liye ek dafa permission
             if (!usageAccessGranted) {                Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunWarningAmber),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -401,7 +404,7 @@ fun StudentDeviceScreen(
                                     context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(38.dp)
                             ) {
                                 Text("Settings Kholo", fontSize = 12.sp, color = Color.White)
@@ -414,7 +417,7 @@ fun StudentDeviceScreen(
                                         repository.refreshTodayUsage(context)
                                     }
                                 },
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(38.dp)
                             ) {
                                 Text("✓ Check Dobara", fontSize = 12.sp)
@@ -427,7 +430,7 @@ fun StudentDeviceScreen(
             if (!guardEnabled) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunEmeraldDark),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -453,7 +456,7 @@ fun StudentDeviceScreen(
                                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(38.dp)
                             ) {
                                 Text("Settings Kholo", fontSize = 12.sp)
@@ -463,7 +466,7 @@ fun StudentDeviceScreen(
                                 onClick = {
                                     guardEnabled = GuardState.isGuardEnabled(context)
                                 },
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(38.dp)
                             ) {
                                 Text("✓ Check Dobara", fontSize = 12.sp)
@@ -477,7 +480,7 @@ fun StudentDeviceScreen(
             if (currentChild.mirroringActive && currentChild.mirrorMode == "video") {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -510,7 +513,7 @@ fun StudentDeviceScreen(
                                         captureLauncher.launch(projectionManager.createScreenCaptureIntent())
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.height(38.dp)
                                 ) {
                                     Text("🎞️ Start Recording", fontSize = 12.sp)
@@ -522,7 +525,7 @@ fun StudentDeviceScreen(
                                         videoRunning = false
                                         recTick++
                                     },
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.height(38.dp)
                                 ) {
                                     Text("Stop Karein", fontSize = 12.sp)
@@ -535,7 +538,7 @@ fun StudentDeviceScreen(
                 // 📁 My Recordings — ab tak ki saved videos
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -554,7 +557,7 @@ fun StudentDeviceScreen(
                             )
                             OutlinedButton(
                                 onClick = { recTick++ },
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(32.dp)
                             ) {
                                 Text("↻ Refresh", fontSize = 11.sp)
@@ -595,7 +598,7 @@ fun StudentDeviceScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 OutlinedButton(
                                     onClick = { playingRec = rec },
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.height(32.dp)
                                 ) {
                                     Text("▶", fontSize = 11.sp)
@@ -610,8 +613,8 @@ fun StudentDeviceScreen(
                     val rec = playingRec!!
                     Dialog(onDismissRequest = { playingRec = null }) {
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF101828)),
-                            shape = RoundedCornerShape(12.dp)
+                            colors = CardDefaults.cardColors(containerColor = TawazunSurface),
+                            shape = RoundedCornerShape(18.dp)
                         ) {
                             Column {
                                 AndroidView(
@@ -641,7 +644,7 @@ fun StudentDeviceScreen(
             } else if (currentChild.mirroringActive) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -672,7 +675,7 @@ fun StudentDeviceScreen(
                                         captureLauncher.launch(projectionManager.createScreenCaptureIntent())
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = TawazunEmeraldPrimary),
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.height(38.dp)
                                 ) {
                                     Text("🪞 Start Karein", fontSize = 12.sp)
@@ -683,7 +686,7 @@ fun StudentDeviceScreen(
                                         context.stopService(Intent(context, ScreenSnapService::class.java))
                                         snapRunning = false
                                     },
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.height(38.dp)
                                 ) {
                                     Text("Stop Karein", fontSize = 12.sp)
@@ -758,7 +761,7 @@ fun StudentBalanceTab(
         item {
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = if (child.homeworkUnlocked) TawazunEmeraldDark else TawazunSurfaceVariant
+                    containerColor = if (child.homeworkUnlocked) TawazunMintSoft else TawazunAmberSoft
                 ),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -813,7 +816,7 @@ fun StudentBalanceTab(
         items(homework) { task ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -913,7 +916,7 @@ fun StudentAppsTab(
                 colors = CardDefaults.cardColors(
                     containerColor = if (isLocked) Color(0xFFF2F3F5) else TawazunSurface
                 ),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
@@ -1014,7 +1017,7 @@ fun StudentBrowserTab(
         if (allowedWebsites.isEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = TawazunSurfaceVariant),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -1052,7 +1055,7 @@ fun StudentBrowserTab(
             allowedWebsites.forEach { site ->
                 Card(
                     colors = CardDefaults.cardColors(containerColor = TawazunSurface),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
@@ -1122,7 +1125,7 @@ fun InAppBrowser(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(TawazunTealBg)
+            .background(TawazunCream)
     ) {
         // Top bar
         Row(
@@ -1146,7 +1149,7 @@ fun InAppBrowser(
             }
             OutlinedButton(
                 onClick = onClose,
-                shape = RoundedCornerShape(6.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.height(34.dp)
             ) {
                 Text("\u2715", fontSize = 13.sp)
@@ -1219,7 +1222,7 @@ fun BedtimePreviewTab(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(TawazunTealBg)
+            .background(TawazunCream)
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
