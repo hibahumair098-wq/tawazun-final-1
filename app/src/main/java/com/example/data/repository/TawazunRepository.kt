@@ -13,6 +13,7 @@ import com.example.data.model.UserSession
 import com.example.data.model.WebAttempt
 import android.content.Context
 import android.content.Intent
+import com.example.data.trial.TrialClock
 import com.example.data.usage.UsageTracker
 import com.example.domain.DomainFilter
 import com.example.service.GuardState
@@ -50,6 +51,9 @@ import java.util.Date
 import java.util.Locale
 
 class TawazunRepository(private val appContext: Context? = null) {
+
+    // ⏳ 72-ghante trial clock — anchor app khulte hi lock ho jata hai (logout-safe)
+    init { TrialClock.anchorMs(appContext) }
 
     // REAL Firebase Authentication engine
     private val auth: FirebaseAuth = FirebaseAuth.getInstance()
@@ -481,50 +485,111 @@ class TawazunRepository(private val appContext: Context? = null) {
 
     private var trialEnsureAttempted = false
 
-    /** Pehla bacha milte hi 3-din FREE trial shuru (sirf 1 dafa, doc na ho tabhi). */
+    /**
+     * ⏳ 72-GHANTE TRIAL — device anchor (TrialClock) aur Firestore, dono mein se
+     * JO PEHLE KHATAM HO wahi maani jati hai. Is liye logout/login, app restart,
+     * ya server doc delete karne se trial kabhi reset/extend nahi hoti.
+     */
     private fun ensureTrialStarted(familyId: String) {
         if (trialEnsureAttempted) return
         trialEnsureAttempted = true
+        val localEnd = TrialClock.endMs(appContext)
         db.collection("families").document(familyId).collection("subscription").document("status").get()
             .addOnSuccessListener { doc ->
-                if (!doc.exists()) {
-                    val now = System.currentTimeMillis()
+                val serverEnd = doc.getLong("trialEnd") ?: Long.MAX_VALUE
+                val effectiveEnd = minOf(serverEnd, localEnd)
+                val alreadyPaid = (doc.getString("plan") ?: "") == "paid" || TrialClock.isPaid(appContext)
+                if (!alreadyPaid && (!doc.exists() || effectiveEnd != serverEnd)) {
                     db.collection("families").document(familyId).collection("subscription").document("status")
                         .set(
                             mapOf(
                                 "plan" to "trial",
-                                "trialStart" to now,
-                                "trialEnd" to now + 3L * 24 * 3600 * 1000,
-                                "childLimit" to 1L
-                            )
+                                "trialStart" to (effectiveEnd - TrialClock.TRIAL_MS),
+                                "trialEnd" to effectiveEnd,
+                                "childLimit" to (doc.getLong("childLimit") ?: 1L)
+                            ),
+                            SetOptions.merge()
                         )
-                    addAudit("TRIAL_STARTED", _currentSession.value?.email ?: "Family", "3-day free trial started (1 child limit).")
+                    addAudit(
+                        "TRIAL_CLOCK_LOCKED",
+                        _currentSession.value?.email ?: "Family",
+                        "72-hour trial clock locked to device anchor (logout-proof, 1 child limit)."
+                    )
                 }
             }
     }
 
-    /** 🎁 Subscription LIVE listener — trialEnd guzarne par status khud TRIAL_EXPIRED. */
+    /** 🎁 Subscription LIVE listener — 72-ghante countdown (device anchor + server, earliest wins). */
     private fun attachSubscriptionListener(familyId: String) {
         subscriptionListener?.remove()
         subscriptionListener = db.collection("families").document(familyId).collection("subscription").document("status")
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
+
+                val localPaid = TrialClock.isPaid(appContext)
+                val localEnd = TrialClock.endMs(appContext)
+                val now = System.currentTimeMillis()
+
                 if (!snapshot.exists()) {
-                    // Trial abhi shuru nahi hui — koi lock nahi
-                    _subscription.value = SubscriptionInfo(status = "ACTIVE_TRIAL", trialDaysRemaining = 3)
+                    val remaining = (localEnd - now).coerceAtLeast(0L)
+                    _subscription.value = SubscriptionInfo(
+                        status = when {
+                            localPaid -> "ACTIVE_SUBSCRIPTION"
+                            remaining <= 0L -> "TRIAL_EXPIRED"
+                            else -> "ACTIVE_TRIAL"
+                        },
+                        trialDaysRemaining = ((remaining + 86399999L) / 86400000L).toInt(),
+                        trialRemainingMs = remaining
+                    )
                     return@addSnapshotListener
                 }
+
                 val plan = snapshot.getString("plan") ?: "trial"
-                val trialEnd = snapshot.getLong("trialEnd") ?: 0L
-                val now = System.currentTimeMillis()
+                val serverEnd = snapshot.getLong("trialEnd") ?: Long.MAX_VALUE
+                val effectiveEnd = minOf(serverEnd, localEnd)
+                val remaining = (effectiveEnd - now).coerceAtLeast(0L)
                 _subscription.value = when {
-                    plan == "paid" -> SubscriptionInfo(status = "ACTIVE_SUBSCRIPTION", trialDaysRemaining = 0)
-                    trialEnd < now -> SubscriptionInfo(status = "TRIAL_EXPIRED", trialDaysRemaining = 0)
+                    plan == "paid" || localPaid -> SubscriptionInfo(
+                        status = "ACTIVE_SUBSCRIPTION",
+                        trialDaysRemaining = 0,
+                        trialRemainingMs = 0L
+                    )
+                    remaining <= 0L -> SubscriptionInfo(
+                        status = "TRIAL_EXPIRED",
+                        trialDaysRemaining = 0,
+                        trialRemainingMs = 0L
+                    )
                     else -> SubscriptionInfo(
                         status = "ACTIVE_TRIAL",
-                        trialDaysRemaining = ((trialEnd - now) / 86400000L).toInt() + 1
+                        trialDaysRemaining = ((remaining + 86399999L) / 86400000L).toInt(),
+                        trialRemainingMs = remaining
                     )
                 }
+            }
+    }
+
+    /** ✅ Payment ke baad activation (filhal manual — gateway jald aa raha hai). */
+    fun activateSubscription() {
+        val fid = _currentSession.value?.familyId ?: return
+        TrialClock.markPaid(appContext)
+        val now = System.currentTimeMillis()
+        db.collection("families").document(fid).collection("subscription").document("status")
+            .set(
+                mapOf(
+                    "plan" to "paid",
+                    "paidAt" to now,
+                    "trialEnd" to now,
+                    "childLimit" to 1L
+                ),
+                SetOptions.merge()
+            )
+            .addOnSuccessListener {
+                _subscription.value = SubscriptionInfo(status = "ACTIVE_SUBSCRIPTION", trialDaysRemaining = 0, trialRemainingMs = 0L)
+                addAudit(
+                    "SUBSCRIPTION_ACTIVATED",
+                    _currentSession.value?.email ?: "Parent",
+                    "₨299/month subscription activated after trial expiry."
+                )
             }
     }
 
